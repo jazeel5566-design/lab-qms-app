@@ -126,6 +126,14 @@ export async function logRun(run) {
   return data;
 }
 
+/** Bulk insert for CSV import — one round trip for many rows instead of one call per row. */
+export async function logRunsBulk(rows) {
+  if (!rows.length) return [];
+  const { data, error } = await supabase.from("qc_runs").insert(rows.map(r => ({ ...r, authorized: false }))).select();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
 export async function deleteRun(id) {
   const { error } = await supabase.from("qc_runs").delete().eq("id", id); // fails if already authorized (RLS)
   if (error) throw new Error(error.message);

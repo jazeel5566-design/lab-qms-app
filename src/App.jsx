@@ -255,6 +255,7 @@ function ImportExportBar({ label, templateRows, sheetName, filenameBase, onImpor
 }
 
 export default function App() {
+  const [authChecked, setAuthChecked] = useState(false);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState("dashboard");
   const [currentUser, setCurrentUser] = useState(null); // { id, name, role }
@@ -272,6 +273,10 @@ export default function App() {
   const [eqaEvents, setEqaEvents] = useState([]);
   const [documents, setDocuments] = useState([]);
 
+  // Runs exactly once, on first load: is there already a signed-in session
+  // (e.g. a returning visitor)? Deliberately does NOT fetch any app data here —
+  // that happens in the next effect, keyed on currentUser, so it re-runs after
+  // a fresh sign-in too, not just on page load.
   useEffect(() => {
     (async () => {
       try {
@@ -279,7 +284,23 @@ export default function App() {
         if (existingUser) {
           setCurrentUser({ id: existingUser.id, name: existingUser.name, role: existingUser.access_role || "Technologist" });
         }
+      } catch (err) {
+        console.error("Session check failed:", err);
+      } finally {
+        setAuthChecked(true);
+      }
+    })();
+  }, []);
 
+  // Runs whenever someone actually becomes signed in — on page load if a
+  // session already existed, AND immediately after a fresh login, since
+  // currentUser?.id changes in both cases. This is what fixes needing a
+  // manual reload after signing in.
+  useEffect(() => {
+    if (!currentUser) return;
+    setLoading(true);
+    (async () => {
+      try {
         const pRows = await personnelApi.listPersonnel();
         const p = pRows.map(personnelFromDb);
         setPersonnel(p);
@@ -321,7 +342,7 @@ export default function App() {
         setLoading(false);
       }
     })();
-  }, []);
+  }, [currentUser?.id]);
 
   // Generic error-safe wrapper: optimistic local update, sync to Supabase,
   // revert on failure. The audit log itself is now written automatically by
@@ -448,6 +469,14 @@ export default function App() {
     }
   };
 
+  /** CSV bulk import — inserts many IQC results (any mix of parameters/machines) in one call. */
+  const bulkImportQcRuns = async (dbRows) => {
+    const inserted = await qcApi.logRunsBulk(dbRows);
+    const mapped = inserted.map(r => runFromDb(r, personnel));
+    setQcRuns(prev => [...mapped, ...prev]);
+    return mapped.length;
+  };
+
   const updateEqaEvents = makeListUpdater(setEqaEvents, () => eqaEvents, eqaToDb, eqaFromDb, {
     create: (row) => eqaDocApi.createEqaEvent(row),
     update: (id, row) => eqaDocApi.updateEqaEvent(id, row),
@@ -501,7 +530,7 @@ export default function App() {
     };
   }, [clauseStatus, tasks, ncs, competency, equipmentRecords, qcParameters, qcControls, qcRuns, eqaEvents]);
 
-  if (loading) {
+  if (!authChecked) {
     return <div className="min-h-screen flex items-center justify-center" style={{ background: COLORS.bg }}>
       <div className="text-sm" style={{ color: COLORS.navy }}>Loading quality management system…</div>
     </div>;
@@ -509,6 +538,12 @@ export default function App() {
 
   if (!currentUser) {
     return <SignInScreen onSignIn={setCurrentUser} />;
+  }
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center" style={{ background: COLORS.bg }}>
+      <div className="text-sm" style={{ color: COLORS.navy }}>Loading your data…</div>
+    </div>;
   }
 
   const isAdmin = currentUser.role === "Admin";
@@ -557,7 +592,7 @@ export default function App() {
           })}
         </nav>
         <div className="px-5 py-3 border-t" style={{ borderColor: "#1C4753" }}>
-          <div className="flex items-center gap-2 mb-1">
+          <div className="flex items-center gap-2 mb-2">
             <div className="w-7 h-7 rounded-full flex items-center justify-center text-xs font-semibold text-white shrink-0" style={{ background: COLORS.teal }}>
               {initialsOf(currentUser.name)}
             </div>
@@ -565,8 +600,12 @@ export default function App() {
               <div className="text-xs text-white truncate">{currentUser.name}</div>
               <div className="text-[10px]" style={{ color: COLORS.seafoam }}>{currentUser.role}</div>
             </div>
-            <button onClick={() => { authApi.signOut(); setCurrentUser(null); }} title="Switch user" className="ml-auto text-gray-400 hover:text-white"><LogOut size={14} /></button>
           </div>
+          <button onClick={() => { authApi.signOut(); setCurrentUser(null); }}
+            className="w-full flex items-center justify-center gap-1.5 text-xs px-2 py-1.5 rounded-md border mb-2"
+            style={{ borderColor: "#2A5560", color: "#C7D6D2" }}>
+            <LogOut size={13} /> Log out
+          </button>
           <div className="text-[10px]" style={{ color: "#5C8A85" }}>Data is stored in this browser only — not shared with other devices or people.</div>
         </div>
       </div>
@@ -584,7 +623,7 @@ export default function App() {
           qcControls={qcControls} updateQcControls={updateQcControls}
           qcRuns={qcRuns} updateQcRuns={updateQcRuns} personnel={personnel}
           canEdit={canEdit} canAuthorizeIQC={canAuthorizeIQC} currentUser={currentUser}
-          authorizeQcRunAction={authorizeQcRunAction} />}
+          authorizeQcRunAction={authorizeQcRunAction} bulkImportQcRuns={bulkImportQcRuns} />}
         {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit} />}
         {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} />}
         {tab === "equipment" && <Equipment equipment={equipment} updateEquipment={updateEquipment}
@@ -1686,8 +1725,9 @@ function AuthorizeControl({ run, currentUser, canAuthorize, onAuthorize }) {
 }
 
 // ---------------- IQC & Levey-Jennings (Clause 7.3.7 Quality control) ----------------
-function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction }) {
+function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns }) {
   const [showMachineForm, setShowMachineForm] = useState(false);
+  const [showCsvImport, setShowCsvImport] = useState(false);
   const [selectedMachineId, setSelectedMachineId] = useState(qcMachines[0]?.id || null);
   const [showParamForm, setShowParamForm] = useState(false);
   const [showDailyEntry, setShowDailyEntry] = useState(false);
@@ -1755,12 +1795,24 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>IQC & Levey-Jennings</h1>
         {canEdit && (
-          <button onClick={() => setShowMachineForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
-            <Plus size={14} /> Add machine
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setShowCsvImport(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+              <Upload size={14} /> Bulk import results (CSV)
+            </button>
+            <button onClick={() => setShowMachineForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
+              <Plus size={14} /> Add machine
+            </button>
+          </div>
         )}
       </div>
       <p className="text-sm text-gray-500 mb-4">Internal quality control for Hematology, Biochemistry, and Immunochemistry analysers — Levey-Jennings charts with Westgard multirule evaluation and result authorization.</p>
+
+      {showCsvImport && canEdit && (
+        <IQCCsvImport
+          qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} personnel={personnel}
+          onImport={bulkImportQcRuns} onClose={() => setShowCsvImport(false)}
+        />
+      )}
 
       <ImportExportBar
         label="analyser list"
@@ -2043,6 +2095,163 @@ function DailyIQCEntry({ parameters, controls, personnel, onSaveBatch, onClose }
             <Save size={14} /> Save all entered results
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------- Bulk CSV import for IQC results (any mix of parameters/machines) ----------------
+function IQCCsvImport({ qcMachines, qcParameters, qcControls, personnel, onImport, onClose }) {
+  const fileRef = useRef(null);
+  const [rows, setRows] = useState([]);
+  const [fileName, setFileName] = useState("");
+  const [importing, setImporting] = useState(false);
+  const [resultMsg, setResultMsg] = useState("");
+
+  const downloadTemplate = () => {
+    const headers = ["Machine", "Parameter", "Level", "Lot Number", "Date", "Time", "Value", "Operator", "Comment"];
+    const sample = qcControls.slice(0, 3).map(c => {
+      const param = qcParameters.find(p => p.id === c.parameterId);
+      const machine = qcMachines.find(m => m.id === param?.machineId);
+      return [machine?.name || "MachineName", param?.name || "ParameterName", c.level, c.lotNumber, todayISO(), "", "", "", ""];
+    });
+    const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [headers.map(escape).join(","), ...sample.map(r => r.map(escape).join(","))];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "iqc-bulk-import-template.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleFile = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setFileName(file.name);
+    setResultMsg("");
+    try {
+      const text = await file.text();
+      const wb = XLSX.read(text, { type: "string" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const parsed = XLSX.utils.sheet_to_json(ws, { defval: "" });
+
+      const withStatus = parsed.map((row) => {
+        const machineName = cellGet(row, "Machine", "machine");
+        const paramName = cellGet(row, "Parameter", "parameter");
+        const level = cellGet(row, "Level", "level");
+        const lot = cellGet(row, "Lot Number", "LotNumber", "lot number", "lot");
+        const date = cellGet(row, "Date", "date");
+        const time = cellGet(row, "Time", "time");
+        const value = cellGet(row, "Value", "value");
+        const operator = cellGet(row, "Operator", "operator");
+        const comment = cellGet(row, "Comment", "comment");
+
+        const machine = qcMachines.find(m => m.name.trim().toLowerCase() === String(machineName).trim().toLowerCase());
+        if (!machine) return { raw: row, status: "error", reason: `Machine "${machineName}" not found` };
+        const param = qcParameters.find(p => p.machineId === machine.id && p.name.trim().toLowerCase() === String(paramName).trim().toLowerCase());
+        if (!param) return { raw: row, status: "error", reason: `Parameter "${paramName}" not found under ${machine.name}` };
+        const paramControls = qcControls.filter(c => c.parameterId === param.id);
+        let control = lot ? paramControls.find(c => (c.lotNumber || "").trim().toLowerCase() === String(lot).trim().toLowerCase()) : null;
+        if (!control && level) control = paramControls.find(c => c.level === String(level).trim());
+        if (!control) return { raw: row, status: "error", reason: `No control level/lot match for ${param.name} (check Level or Lot Number)` };
+        if (!date) return { raw: row, status: "error", reason: "Missing date" };
+        if (value === "" || isNaN(parseFloat(value))) return { raw: row, status: "error", reason: "Missing or invalid value" };
+
+        return {
+          raw: row, status: "ok",
+          machine: machine.name, parameter: param.name, level: control.level, lot: control.lotNumber,
+          controlId: control.id, date: String(date), time: time || "", value: parseFloat(value),
+          operator: operator || "", comment: comment || "",
+        };
+      });
+      setRows(withStatus);
+    } catch (err) {
+      setResultMsg("Could not read that file — make sure it's a .csv file matching the template's columns.");
+      setRows([]);
+    }
+    e.target.value = "";
+  };
+
+  const validRows = rows.filter(r => r.status === "ok");
+  const errorRows = rows.filter(r => r.status === "error");
+
+  const handleImport = async () => {
+    setImporting(true);
+    try {
+      const count = await onImport(validRows.map(r => ({
+        control_id: r.controlId,
+        date: r.date,
+        time: r.time || null,
+        value: r.value,
+        operator: nameToId(personnel, r.operator),
+        comment: r.comment || null,
+      })));
+      setResultMsg(`Imported ${count} result${count !== 1 ? "s" : ""}.${errorRows.length ? ` ${errorRows.length} row(s) skipped — see below.` : ""}`);
+      setRows(errorRows); // keep only the failed rows visible so they can be fixed and re-tried
+    } catch (e) {
+      setResultMsg("Import failed: " + e.message);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: COLORS.teal, borderWidth: 1.5 }}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-sm font-semibold flex items-center gap-2" style={{ color: COLORS.navy }}>
+          <Upload size={15} color={COLORS.teal} /> Bulk import IQC results from CSV
+        </div>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={15} /></button>
+      </div>
+      <p className="text-xs text-gray-500 mb-3">
+        One file, any mix of parameters and machines — each row is matched to an existing control level by Machine + Parameter + (Lot Number or Level). Control levels must already be set up first; this only logs results, it doesn't create new parameters or controls.
+      </p>
+
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <button onClick={downloadTemplate} className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+          <Download size={13} /> Download CSV template
+        </button>
+        <button onClick={() => fileRef.current?.click()} className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.navy, color: COLORS.navy }}>
+          <Upload size={13} /> Choose CSV file
+        </button>
+        <input ref={fileRef} type="file" accept=".csv" onChange={handleFile} className="hidden" />
+        {fileName && <span className="text-xs text-gray-400">{fileName}</span>}
+      </div>
+
+      {rows.length > 0 && (
+        <>
+          <div className="flex items-center gap-3 mb-2 text-xs">
+            <Badge color={COLORS.teal}>{validRows.length} ready to import</Badge>
+            {errorRows.length > 0 && <Badge color={COLORS.red}>{errorRows.length} need fixing</Badge>}
+          </div>
+          <div className="border rounded-md divide-y max-h-64 overflow-auto mb-3" style={{ borderColor: "#EEF3F1" }}>
+            {rows.map((r, i) => (
+              <div key={i} className="px-3 py-1.5 text-xs flex items-center gap-2">
+                {r.status === "ok" ? (
+                  <>
+                    <Badge color={COLORS.teal}>OK</Badge>
+                    <span>{r.machine} · {r.parameter} · {r.level} · {r.date} · value {r.value}</span>
+                  </>
+                ) : (
+                  <>
+                    <Badge color={COLORS.red}>Skip</Badge>
+                    <span className="text-gray-500">{r.reason}</span>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {resultMsg && <div className="text-xs mb-3" style={{ color: COLORS.teal }}>{resultMsg}</div>}
+
+      <div className="flex justify-end gap-2">
+        <button onClick={onClose} className="text-sm px-3 py-1.5 text-gray-500">Close</button>
+        <button onClick={handleImport} disabled={importing || validRows.length === 0}
+          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-40" style={{ background: COLORS.teal }}>
+          <Save size={14} /> {importing ? "Importing…" : `Import ${validRows.length} result${validRows.length !== 1 ? "s" : ""}`}
+        </button>
       </div>
     </div>
   );
