@@ -294,6 +294,10 @@ export const documentFromDb = (row, personnel) => ({
   uploadedBy: idToName(personnel, row.uploaded_by),
   uploadedAt: (row.uploaded_at || "").slice(0, 10),
   notes: row.notes || "",
+  documentCode: row.document_code || "",
+  version: row.version || 1,
+  isCurrent: row.is_current !== false,
+  personnelName: idToName(personnel, row.personnel_id),
 });
 export const documentToDb = (d, personnel) => ({
   title: d.title,
@@ -302,4 +306,6 @@ export const documentToDb = (d, personnel) => ({
   url: d.url,
   uploaded_by: nameToId(personnel, d.uploadedBy),
   notes: d.notes || null,
+  document_code: d.documentCode || null,
+  personnel_id: nameToId(personnel, d.personnelName),
 });

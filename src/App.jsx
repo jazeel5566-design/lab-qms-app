@@ -4,7 +4,7 @@ import {
   Circle, Clock, Plus, X, ChevronDown, ChevronRight, Trash2, Pencil,
   ShieldCheck, ListChecks, Search, Save, GraduationCap, Wrench, Paperclip,
   Activity, BarChart3, UserCheck, ShieldAlert, FlaskConical, Download, Upload,
-  History, LogOut, FolderOpen, Link as LinkIcon, KeyRound, DatabaseBackup
+  History, LogOut, FolderOpen, Link as LinkIcon, KeyRound, DatabaseBackup, BookOpen, IdCard, FileCheck2
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer
@@ -130,7 +130,11 @@ const ROLE_DESC = {
   Viewer: "Read-only access to all modules.",
 };
 const TASK_ASSIGNER_ROLES = ["Admin", "Deputy Admin", "QA Manager", "Deputy QA Manager"];
-const DOCUMENT_CATEGORIES = ["SOP", "Policy", "Manual", "Calibration certificate", "Service report", "EQA certificate", "Training material", "Other"];
+const DOCUMENT_PUBLISHER_ROLES = ["Admin", "QA Manager", "Deputy QA Manager"];
+const CONTROLLED_DOCUMENT_CATEGORIES = ["SOP", "QSP", "Policy", "Manual"];
+const PERSONAL_DOCUMENT_CATEGORIES = ["Professional licence / registration", "Certification", "Other personal document"];
+const GENERAL_DOCUMENT_CATEGORIES = ["Calibration certificate", "Service report", "EQA certificate", "Training material", "Other"];
+const DOCUMENT_CATEGORIES = [...CONTROLLED_DOCUMENT_CATEGORIES, ...PERSONAL_DOCUMENT_CATEGORIES, ...GENERAL_DOCUMENT_CATEGORIES];
 
 const initialsOf = (name) => (name || "").trim().split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 3);
 const zScore = (value, mean, sd) => (!sd ? 0 : (value - mean) / sd);
@@ -489,6 +493,25 @@ export default function App() {
     remove: (id) => eqaDocApi.deleteDocument(id),
   });
 
+  /**
+   * Publishes a new version of a controlled document (SOP/QSP/Policy/Manual).
+   * Enforced server-side (RLS, 0007_document_control.sql) to Admin/QA Manager/
+   * Deputy QA Manager regardless of what the client sends. On success, the
+   * prior current version for the same document_code is marked superseded
+   * in local state too, so every signed-in user's next fetch — and this
+   * session immediately — shows the new version as current.
+   */
+  const publishControlledDocumentAction = async (draft) => {
+    const dbRow = documentToDb({ ...draft, uploadedBy: currentUser.name }, personnel);
+    const inserted = await eqaDocApi.publishControlledDocument(dbRow);
+    const mapped = documentFromDb(inserted, personnel);
+    setDocuments(prev => [
+      mapped,
+      ...prev.map(d => (d.documentCode && d.documentCode === mapped.documentCode ? { ...d, isCurrent: false } : d)),
+    ]);
+    return mapped;
+  };
+
   const stats = useMemo(() => {
     const statuses = ALL_SUBCLAUSES.map(s => clauseStatus[s.id]?.status || "Not assessed");
     const counts = { "Not assessed": 0, "Compliant": 0, "Partial": 0, "Non-conformant": 0 };
@@ -551,6 +574,7 @@ export default function App() {
   const canEdit = currentUser.role !== "Viewer";
   const canAuthorizeIQC = isAdmin || isQaManager;
   const canAssignTasks = TASK_ASSIGNER_ROLES.includes(currentUser.role);
+  const canPublishControlledDocs = DOCUMENT_PUBLISHER_ROLES.includes(currentUser.role);
   const canSeeAuditBackup = isAdmin || isQaManager;
 
   const NAV = [
@@ -565,6 +589,7 @@ export default function App() {
     { id: "documents", label: "Documents", icon: FolderOpen },
     { id: "personnel", label: "Personnel", icon: Users },
     ...(canSeeAuditBackup ? [{ id: "audit", label: "Audit & Backup", icon: History }] : []),
+    { id: "manual", label: "User Manual", icon: BookOpen, href: "/Lab-QMS-User-Manual.pdf" },
   ];
 
   return (
@@ -582,6 +607,15 @@ export default function App() {
           {NAV.map(n => {
             const Icon = n.icon;
             const active = tab === n.id;
+            if (n.href) {
+              return (
+                <a key={n.id} href={n.href} target="_blank" rel="noreferrer"
+                  className="w-full flex items-center gap-3 px-5 py-2.5 text-sm text-left transition-colors"
+                  style={{ color: "#A9C4C0", background: "transparent" }}>
+                  <Icon size={16} /> {n.label}
+                </a>
+              );
+            }
             return (
               <button key={n.id} onClick={() => setTab(n.id)}
                 className="w-full flex items-center gap-3 px-5 py-2.5 text-sm text-left transition-colors"
@@ -628,7 +662,9 @@ export default function App() {
         {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} />}
         {tab === "equipment" && <Equipment equipment={equipment} updateEquipment={updateEquipment}
           equipmentRecords={equipmentRecords} updateEquipmentRecords={updateEquipmentRecords} personnel={personnel} canEdit={canEdit} />}
-        {tab === "documents" && <Documents documents={documents} updateDocuments={updateDocuments} currentUser={currentUser} canEdit={canEdit} />}
+        {tab === "documents" && <Documents documents={documents} updateDocuments={updateDocuments} personnel={personnel}
+          currentUser={currentUser} canEdit={canEdit} canPublishControlledDocs={canPublishControlledDocs}
+          publishControlledDocumentAction={publishControlledDocumentAction} />}
         {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canEdit={canEdit} />}
         {tab === "audit" && canSeeAuditBackup && <AuditBackup />}
       </div>
@@ -2594,70 +2630,277 @@ function SignInScreen({ onSignIn }) {
 }
 
 // ---------------- Documents (linked SOPs, certificates, calibration reports) ----------------
-function Documents({ documents, updateDocuments, currentUser, canEdit }) {
-  const [showForm, setShowForm] = useState(false);
-  const [filterCategory, setFilterCategory] = useState("All");
+function Documents({ documents, updateDocuments, personnel, currentUser, canEdit, canPublishControlledDocs, publishControlledDocumentAction }) {
+  const [section, setSection] = useState("controlled");
+  const [showControlledForm, setShowControlledForm] = useState(false);
+  const [showPersonalForm, setShowPersonalForm] = useState(false);
+  const [showGeneralForm, setShowGeneralForm] = useState(false);
+  const [expandedCode, setExpandedCode] = useState(null);
+  const [publishError, setPublishError] = useState("");
 
-  const addDoc = (draft) => {
-    updateDocuments([{ id: uid(), uploadedBy: currentUser.name, uploadedAt: todayISO(), ...draft }, ...documents]);
-    setShowForm(false);
-  };
+  const controlledDocs = documents.filter(d => CONTROLLED_DOCUMENT_CATEGORIES.includes(d.category));
+  const personalDocs = documents.filter(d => PERSONAL_DOCUMENT_CATEGORIES.includes(d.category));
+  const generalDocs = documents.filter(d => GENERAL_DOCUMENT_CATEGORIES.includes(d.category));
+
+  const controlledGroups = {};
+  controlledDocs.forEach(d => {
+    const key = d.documentCode || d.id;
+    (controlledGroups[key] = controlledGroups[key] || []).push(d);
+  });
+  const controlledList = Object.entries(controlledGroups).map(([code, versions]) => {
+    const sorted = [...versions].sort((a, b) => b.version - a.version);
+    const current = sorted.find(v => v.isCurrent) || sorted[0];
+    const history = sorted.filter(v => v.id !== current.id);
+    return { code, current, history };
+  }).sort((a, b) => (b.current.uploadedAt || "").localeCompare(a.current.uploadedAt || ""));
+
+  const personalByPerson = {};
+  personalDocs.forEach(d => {
+    const key = d.personnelName || "Unassigned";
+    (personalByPerson[key] = personalByPerson[key] || []).push(d);
+  });
+
   const removeDoc = (id) => updateDocuments(documents.filter(d => d.id !== id));
 
-  const filtered = documents.filter(d => filterCategory === "All" || d.category === filterCategory);
+  const handlePublish = async (draft) => {
+    setPublishError("");
+    try {
+      await publishControlledDocumentAction(draft);
+      setShowControlledForm(false);
+    } catch (e) {
+      setPublishError(e.message);
+    }
+  };
+  const addPersonal = (draft) => {
+    updateDocuments([{ id: uid(), uploadedBy: currentUser.name, uploadedAt: todayISO(), ...draft }, ...documents]);
+    setShowPersonalForm(false);
+  };
+  const addGeneral = (draft) => {
+    updateDocuments([{ id: uid(), uploadedBy: currentUser.name, uploadedAt: todayISO(), ...draft }, ...documents]);
+    setShowGeneralForm(false);
+  };
+
+  const SECTION_TABS = [
+    { id: "controlled", label: `Controlled documents (${controlledList.length})` },
+    { id: "personal", label: `Personal documents (${personalDocs.length})` },
+    { id: "general", label: `General documents (${generalDocs.length})` },
+  ];
 
   return (
     <div className="p-8 max-w-5xl">
-      <div className="flex items-center justify-between mb-1">
-        <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Documents</h1>
-        {canEdit && (
-          <button onClick={() => setShowForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
-            <Plus size={14} /> Link a document
-          </button>
-        )}
-      </div>
-      <p className="text-sm text-gray-500 mb-1">SOPs, certificates, calibration reports, and other quality records, linked from wherever they're stored (Drive, SharePoint, etc.).</p>
-      <p className="text-xs text-gray-400 mb-4">This app stores links and metadata, not the files themselves — keep the source files in your document management system or cloud drive and paste the link here.</p>
+      <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Documents</h1>
+      <p className="text-xs text-gray-400 mb-4">This app stores links and metadata, not the files themselves — keep source files in your document management system or cloud drive and paste the link here.</p>
 
       <div className="flex gap-2 mb-4">
-        <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
-          <option>All</option>{DOCUMENT_CATEGORIES.map(c => <option key={c}>{c}</option>)}
-        </select>
+        {SECTION_TABS.map(s => (
+          <button key={s.id} onClick={() => setSection(s.id)}
+            className="text-xs px-3 py-1.5 rounded-md border"
+            style={{
+              borderColor: section === s.id ? COLORS.teal : "#D8E5E1",
+              background: section === s.id ? COLORS.mint : "white",
+              color: section === s.id ? COLORS.teal : COLORS.ink,
+            }}>{s.label}</button>
+        ))}
       </div>
 
-      {showForm && canEdit && <DocumentForm onCancel={() => setShowForm(false)} onSave={addDoc} />}
-
-      <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
-        {filtered.length === 0 && <Empty text="No documents linked yet." />}
-        {filtered.map(d => (
-          <div key={d.id} className="flex items-center gap-3 px-5 py-3">
-            <Paperclip size={15} color={COLORS.teal} className="shrink-0" />
-            <div className="flex-1 min-w-0">
-              <a href={d.url} target="_blank" rel="noreferrer" className="text-sm font-medium truncate block" style={{ color: COLORS.navy }}>{d.title}</a>
-              <div className="text-xs text-gray-400 truncate">{d.relatedTo}{d.relatedTo ? " · " : ""}Uploaded by {d.uploadedBy} · {d.uploadedAt}</div>
-            </div>
-            <Badge color={COLORS.teal}>{d.category}</Badge>
-            {canEdit && <button onClick={() => removeDoc(d.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+      {section === "controlled" && (
+        <>
+          <p className="text-sm text-gray-500 mb-3">SOPs, QSPs, policies, and manuals. Publishing a new version under the same Document Code automatically replaces the current version for everyone — earlier versions stay retrievable under version history. Only Admin, QA Manager, or their deputy can publish.</p>
+          {canPublishControlledDocs ? (
+            <button onClick={() => setShowControlledForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white mb-3" style={{ background: COLORS.teal }}>
+              <Plus size={14} /> Publish SOP / QSP / Policy / Manual
+            </button>
+          ) : (
+            <p className="text-xs text-gray-400 mb-3">Publishing controlled documents is limited to the QA Manager, their deputy, or an Admin.</p>
+          )}
+          {showControlledForm && canPublishControlledDocs && (
+            <ControlledDocumentForm onCancel={() => { setShowControlledForm(false); setPublishError(""); }} onSave={handlePublish}
+              error={publishError} existingCodes={[...new Set(controlledDocs.map(d => d.documentCode).filter(Boolean))]} />
+          )}
+          <div className="space-y-2">
+            {controlledList.length === 0 && <Empty text="No controlled documents published yet." />}
+            {controlledList.map(({ code, current, history }) => (
+              <div key={code} className="bg-white rounded-lg border" style={{ borderColor: "#E1EBE8" }}>
+                <div className="flex items-center gap-3 px-5 py-3">
+                  <FileCheck2 size={15} color={COLORS.teal} className="shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <a href={current.url} target="_blank" rel="noreferrer" className="text-sm font-medium truncate block" style={{ color: COLORS.navy }}>{current.title}</a>
+                    <div className="text-xs text-gray-400 truncate">
+                      {current.documentCode ? `${current.documentCode} · ` : ""}v{current.version} (current) · Published by {current.uploadedBy} · {current.uploadedAt}
+                    </div>
+                  </div>
+                  <Badge color={COLORS.teal}>{current.category}</Badge>
+                  {history.length > 0 && (
+                    <button onClick={() => setExpandedCode(expandedCode === code ? null : code)} className="text-xs text-gray-400 flex items-center gap-1">
+                      {history.length} earlier version{history.length !== 1 ? "s" : ""} {expandedCode === code ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                    </button>
+                  )}
+                  {canPublishControlledDocs && <button onClick={() => removeDoc(current.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+                </div>
+                {expandedCode === code && history.length > 0 && (
+                  <div className="px-5 pb-3 border-t pt-2" style={{ borderColor: "#EEF3F1" }}>
+                    {history.map(h => (
+                      <div key={h.id} className="flex items-center gap-2 text-xs text-gray-400 py-1 pl-7">
+                        <Badge color="#9AA5A3">Superseded</Badge>
+                        <a href={h.url} target="_blank" rel="noreferrer" className="underline">{h.title}</a>
+                        <span>v{h.version} · {h.uploadedAt}</span>
+                        {canPublishControlledDocs && <button onClick={() => removeDoc(h.id)} className="ml-auto text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
-        ))}
+        </>
+      )}
+
+      {section === "personal" && (
+        <>
+          <p className="text-sm text-gray-500 mb-3">Staff professional licences, registrations, and certifications relevant to QMS work — kept against each person's record.</p>
+          {canEdit && (
+            <button onClick={() => setShowPersonalForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white mb-3" style={{ background: COLORS.teal }}>
+              <Plus size={14} /> Upload personal document
+            </button>
+          )}
+          {showPersonalForm && canEdit && <PersonalDocumentForm personnel={personnel} onCancel={() => setShowPersonalForm(false)} onSave={addPersonal} />}
+
+          {Object.keys(personalByPerson).length === 0 && <Empty text="No personal documents uploaded yet." />}
+          {Object.entries(personalByPerson).map(([person, docs]) => (
+            <div key={person} className="mb-3">
+              <div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>{person}</div>
+              <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
+                {docs.map(d => (
+                  <div key={d.id} className="flex items-center gap-3 px-5 py-2.5">
+                    <IdCard size={14} color={COLORS.teal} className="shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <a href={d.url} target="_blank" rel="noreferrer" className="text-sm truncate block" style={{ color: COLORS.navy }}>{d.title}</a>
+                      <div className="text-xs text-gray-400 truncate">{d.category} · Uploaded {d.uploadedAt}{d.notes ? ` · ${d.notes}` : ""}</div>
+                    </div>
+                    {canEdit && <button onClick={() => removeDoc(d.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </>
+      )}
+
+      {section === "general" && (
+        <>
+          <p className="text-sm text-gray-500 mb-3">Calibration certificates, service reports, EQA certificates, training materials, and anything else worth indexing.</p>
+          {canEdit && (
+            <button onClick={() => setShowGeneralForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white mb-3" style={{ background: COLORS.teal }}>
+              <Plus size={14} /> Link a document
+            </button>
+          )}
+          {showGeneralForm && canEdit && <GeneralDocumentForm onCancel={() => setShowGeneralForm(false)} onSave={addGeneral} />}
+
+          <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
+            {generalDocs.length === 0 && <Empty text="No general documents linked yet." />}
+            {generalDocs.map(d => (
+              <div key={d.id} className="flex items-center gap-3 px-5 py-3">
+                <Paperclip size={15} color={COLORS.teal} className="shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <a href={d.url} target="_blank" rel="noreferrer" className="text-sm font-medium truncate block" style={{ color: COLORS.navy }}>{d.title}</a>
+                  <div className="text-xs text-gray-400 truncate">{d.relatedTo}{d.relatedTo ? " · " : ""}Uploaded by {d.uploadedBy} · {d.uploadedAt}</div>
+                </div>
+                <Badge color={COLORS.teal}>{d.category}</Badge>
+                {canEdit && <button onClick={() => removeDoc(d.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function ControlledDocumentForm({ onSave, onCancel, error, existingCodes }) {
+  const [documentCode, setDocumentCode] = useState("");
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState(CONTROLLED_DOCUMENT_CATEGORIES[0]);
+  const [url, setUrl] = useState("");
+  const [notes, setNotes] = useState("");
+  const isNewVersion = existingCodes.includes(documentCode.trim());
+
+  return (
+    <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Document Code">
+          <input className={inputCls} style={inputStyle} value={documentCode} onChange={e => setDocumentCode(e.target.value)}
+            placeholder="e.g. SOP-HEM-014" list="existing-doc-codes" />
+          <datalist id="existing-doc-codes">{existingCodes.map(c => <option key={c} value={c} />)}</datalist>
+          {documentCode.trim() && (
+            <div className="text-[11px] mt-1" style={{ color: isNewVersion ? COLORS.amber : COLORS.teal }}>
+              {isNewVersion ? "Matches an existing code — this will publish as the new current version and supersede the old one." : "New code — this will be published as version 1."}
+            </div>
+          )}
+        </Field>
+        <Field label="Category">
+          <select className={inputCls} style={inputStyle} value={category} onChange={e => setCategory(e.target.value)}>
+            {CONTROLLED_DOCUMENT_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="Title"><input className={inputCls} style={inputStyle} value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Manual Differential Counting" /></Field>
+        <Field label="Link (Drive / SharePoint / etc.)"><input className={inputCls} style={inputStyle} value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" /></Field>
+      </div>
+      <Field label="Notes (optional)"><textarea className={inputCls} style={inputStyle} rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What changed in this version, effective date, etc." /></Field>
+      {error && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{error}</div>}
+      <div className="flex justify-end gap-2 mt-2">
+        <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
+        <button onClick={() => title.trim() && url.trim() && onSave({ documentCode: documentCode.trim(), title, category, url, notes, relatedTo: "" })}
+          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Publish</button>
       </div>
     </div>
   );
 }
 
-function DocumentForm({ onSave, onCancel }) {
+function PersonalDocumentForm({ personnel, onSave, onCancel }) {
+  const [personnelName, setPersonnelName] = useState("");
   const [title, setTitle] = useState("");
-  const [category, setCategory] = useState(DOCUMENT_CATEGORIES[0]);
+  const [category, setCategory] = useState(PERSONAL_DOCUMENT_CATEGORIES[0]);
+  const [url, setUrl] = useState("");
+  const [notes, setNotes] = useState("");
+  return (
+    <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Staff member">
+          <select className={inputCls} style={inputStyle} value={personnelName} onChange={e => setPersonnelName(e.target.value)}>
+            <option value="">Select…</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+          </select>
+        </Field>
+        <Field label="Document type">
+          <select className={inputCls} style={inputStyle} value={category} onChange={e => setCategory(e.target.value)}>
+            {PERSONAL_DOCUMENT_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+          </select>
+        </Field>
+        <Field label="Title"><input className={inputCls} style={inputStyle} value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. MLS Licence — Aishath Shifa" /></Field>
+        <Field label="Link (Drive / SharePoint / etc.)"><input className={inputCls} style={inputStyle} value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" /></Field>
+      </div>
+      <Field label="Notes (optional)"><input className={inputCls} style={inputStyle} value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Expires 2027-04-01" /></Field>
+      <div className="flex justify-end gap-2 mt-2">
+        <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
+        <button onClick={() => personnelName && title.trim() && url.trim() && onSave({ personnelName, title, category, url, notes, relatedTo: "" })}
+          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Upload</button>
+      </div>
+    </div>
+  );
+}
+
+function GeneralDocumentForm({ onSave, onCancel }) {
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState(GENERAL_DOCUMENT_CATEGORIES[0]);
   const [relatedTo, setRelatedTo] = useState("");
   const [url, setUrl] = useState("");
   const [notes, setNotes] = useState("");
   return (
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="Title"><input className={inputCls} style={inputStyle} value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. SOP-HEM-014 Manual Differential Counting v3" /></Field>
+        <Field label="Title"><input className={inputCls} style={inputStyle} value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Medonic M51 Service Report — March 2026" /></Field>
         <Field label="Category">
           <select className={inputCls} style={inputStyle} value={category} onChange={e => setCategory(e.target.value)}>
-            {DOCUMENT_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+            {GENERAL_DOCUMENT_CATEGORIES.map(c => <option key={c}>{c}</option>)}
           </select>
         </Field>
         <Field label="Related to (optional)"><input className={inputCls} style={inputStyle} value={relatedTo} onChange={e => setRelatedTo(e.target.value)} placeholder="e.g. Medonic M51, Clause 6.4, NC-003" /></Field>
