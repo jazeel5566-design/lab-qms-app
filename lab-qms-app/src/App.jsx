@@ -22,6 +22,8 @@ import * as qcApi from "./api/qc.js";
 import * as eqaDocApi from "./api/eqaAndDocuments.js";
 import * as riskApi from "./api/risks.js";
 import * as mgmtReviewApi from "./api/managementReviews.js";
+import * as storageApi from "./api/storage.js";
+import * as ackApi from "./api/documentAcknowledgments.js";
 import * as auditApi from "./api/auditAndBackup.js";
 import {
   syncList, syncClauseStatus, nameToId, idToName, rowToClauseStatus,
@@ -33,6 +35,7 @@ import {
   controlFromDb, controlToDb, runFromDb, runToDb,
   eqaFromDb, eqaToDb, documentFromDb, documentToDb,
   riskFromDb, riskToDb, managementReviewFromDb, managementReviewToDb,
+  acknowledgmentFromDb,
 } from "./dataSync.js";
 
 // ---------- ISO 15189:2022 clause tree ----------
@@ -282,6 +285,7 @@ export default function App() {
   const [documents, setDocuments] = useState([]);
   const [risks, setRisks] = useState([]);
   const [managementReviews, setManagementReviews] = useState([]);
+  const [documentAcknowledgments, setDocumentAcknowledgments] = useState([]);
 
   // Runs exactly once, on first load: is there already a signed-in session
   // (e.g. a returning visitor)? Deliberately does NOT fetch any app data here —
@@ -315,7 +319,7 @@ export default function App() {
         const p = pRows.map(personnelFromDb);
         setPersonnel(p);
 
-        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows] = await Promise.all([
+        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows] = await Promise.all([
           clauseApi.listClauseStatus(),
           taskApi.listTasks(),
           ncApi.listNonconformities(),
@@ -330,6 +334,7 @@ export default function App() {
           eqaDocApi.listDocuments(),
           riskApi.listRisks(),
           mgmtReviewApi.listManagementReviews(),
+          ackApi.listAllAcknowledgments(),
         ]);
 
         const cs = {};
@@ -350,6 +355,7 @@ export default function App() {
         setDocuments(docRows.map(r => documentFromDb(r, p)));
         setRisks(riskRows.map(r => riskFromDb(r, p)));
         setManagementReviews(mrRows.map(r => managementReviewFromDb(r, p)));
+        setDocumentAcknowledgments(ackRows.map(r => acknowledgmentFromDb(r, p)));
       } catch (err) {
         console.error("Failed to load data from Supabase:", err);
       } finally {
@@ -520,6 +526,22 @@ export default function App() {
   const deleteManagementReview = async (id) => {
     await mgmtReviewApi.deleteManagementReview(id);
     setManagementReviews(prev => prev.filter(m => m.id !== id));
+  };
+
+  /** Records that the CURRENT signed-in user has read a document — the personnel_id is always the caller's own, enforced server-side (0009 migration), so no one can acknowledge on someone else's behalf. */
+  const acknowledgeDocumentAction = async (documentId) => {
+    const myPersonnel = personnel.find(p => p.id === currentUser.id || p.name === currentUser.name);
+    if (!myPersonnel) return;
+    try {
+      await ackApi.acknowledgeDocument(documentId, myPersonnel.id);
+      setDocumentAcknowledgments(prev => {
+        const already = prev.some(a => a.documentId === documentId && a.personnelName === myPersonnel.name);
+        if (already) return prev;
+        return [...prev, { id: uid(), documentId, personnelName: myPersonnel.name, acknowledgedAt: new Date().toISOString() }];
+      });
+    } catch (e) {
+      alert("Could not record acknowledgment.\n\n" + e.message);
+    }
   };
 
   /**
@@ -699,7 +721,8 @@ export default function App() {
           equipmentRecords={equipmentRecords} updateEquipmentRecords={updateEquipmentRecords} personnel={personnel} canEdit={canEdit} />}
         {tab === "documents" && <Documents documents={documents} updateDocuments={updateDocuments} personnel={personnel}
           currentUser={currentUser} canEdit={canEdit} canPublishControlledDocs={canPublishControlledDocs}
-          publishControlledDocumentAction={publishControlledDocumentAction} />}
+          publishControlledDocumentAction={publishControlledDocumentAction}
+          documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} />}
         {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canEdit={canEdit} />}
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} addManagementReview={addManagementReview}
           deleteManagementReview={deleteManagementReview} stats={stats} currentUser={currentUser} />}
@@ -2886,7 +2909,34 @@ function SignInScreen({ onSignIn }) {
 }
 
 // ---------------- Documents (linked SOPs, certificates, calibration reports) ----------------
-function Documents({ documents, updateDocuments, personnel, currentUser, canEdit, canPublishControlledDocs, publishControlledDocumentAction }) {
+// ---------------- Document link (handles both an external URL and a real uploaded file) ----------------
+function DocumentLink({ title, url, storagePath, className }) {
+  const [loading, setLoading] = useState(false);
+
+  if (storagePath) {
+    const handleOpen = async () => {
+      setLoading(true);
+      try {
+        const signedUrl = await storageApi.getSignedDocumentUrl(storagePath);
+        window.open(signedUrl, "_blank", "noopener,noreferrer");
+      } catch (e) {
+        alert("Could not open this file.\n\n" + e.message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    return (
+      <button onClick={handleOpen} disabled={loading} className={`text-sm font-medium truncate text-left ${className || "block"}`} style={{ color: COLORS.navy }}>
+        {loading ? "Opening…" : title}
+      </button>
+    );
+  }
+  return (
+    <a href={url} target="_blank" rel="noreferrer" className={`text-sm font-medium truncate ${className || "block"}`} style={{ color: COLORS.navy }}>{title}</a>
+  );
+}
+
+function Documents({ documents, updateDocuments, personnel, currentUser, canEdit, canPublishControlledDocs, publishControlledDocumentAction, documentAcknowledgments, acknowledgeDocumentAction }) {
   const [section, setSection] = useState("controlled");
   const [showControlledForm, setShowControlledForm] = useState(false);
   const [showPersonalForm, setShowPersonalForm] = useState(false);
@@ -2945,7 +2995,7 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
   return (
     <div className="p-8 max-w-5xl">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Documents</h1>
-      <p className="text-xs text-gray-400 mb-4">This app stores links and metadata, not the files themselves — keep source files in your document management system or cloud drive and paste the link here.</p>
+      <p className="text-xs text-gray-400 mb-4">Upload a file directly, or paste a link to wherever it's already stored (Drive, SharePoint, etc.) — either works for any document below.</p>
 
       <div className="flex gap-2 mb-4">
         {SECTION_TABS.map(s => (
@@ -2975,12 +3025,17 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
           )}
           <div className="space-y-2">
             {controlledList.length === 0 && <Empty text="No controlled documents published yet." />}
-            {controlledList.map(({ code, current, history }) => (
+            {controlledList.map(({ code, current, history }) => {
+              const ackForDoc = documentAcknowledgments.filter(a => a.documentId === current.id);
+              const iAcknowledged = ackForDoc.some(a => a.personnelName === currentUser.name);
+              const showAckList = expandedCode === `ack-${code}`;
+              const toggleAckList = () => setExpandedCode(expandedCode === `ack-${code}` ? null : `ack-${code}`);
+              return (
               <div key={code} className="bg-white rounded-lg border" style={{ borderColor: "#E1EBE8" }}>
                 <div className="flex items-center gap-3 px-5 py-3">
                   <ShieldCheck size={15} color={COLORS.teal} className="shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <a href={current.url} target="_blank" rel="noreferrer" className="text-sm font-medium truncate block" style={{ color: COLORS.navy }}>{current.title}</a>
+                    <DocumentLink title={current.title} url={current.url} storagePath={current.storagePath} />
                     <div className="text-xs text-gray-400 truncate">
                       {current.documentCode ? `${current.documentCode} · ` : ""}v{current.version} (current) · Published by {current.uploadedBy} · {current.uploadedAt}
                     </div>
@@ -2993,12 +3048,37 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
                   )}
                   {canPublishControlledDocs && <button onClick={() => removeDoc(current.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
                 </div>
+
+                <div className="px-5 pb-3 flex items-center gap-2 flex-wrap">
+                  <Badge color={ackForDoc.length === personnel.length && personnel.length > 0 ? COLORS.teal : COLORS.amber}>
+                    {ackForDoc.length} of {personnel.length} staff acknowledged
+                  </Badge>
+                  {iAcknowledged ? (
+                    <Badge color={COLORS.teal}>You've confirmed reading this version</Badge>
+                  ) : (
+                    <button onClick={() => acknowledgeDocumentAction(current.id)} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                      I've read this
+                    </button>
+                  )}
+                  {canPublishControlledDocs && (
+                    <button onClick={toggleAckList} className="text-xs text-gray-400 underline">
+                      {showAckList ? "Hide" : "Show"} who has / hasn't acknowledged
+                    </button>
+                  )}
+                </div>
+                {showAckList && canPublishControlledDocs && (
+                  <div className="px-5 pb-3 border-t pt-2 text-xs" style={{ borderColor: "#EEF3F1" }}>
+                    <div className="text-gray-500 mb-1">Acknowledged ({ackForDoc.length}): {ackForDoc.map(a => a.personnelName).join(", ") || "—"}</div>
+                    <div className="text-gray-400">Not yet acknowledged: {personnel.filter(p => !ackForDoc.some(a => a.personnelName === p.name)).map(p => p.name).join(", ") || "Everyone has acknowledged"}</div>
+                  </div>
+                )}
+
                 {expandedCode === code && history.length > 0 && (
                   <div className="px-5 pb-3 border-t pt-2" style={{ borderColor: "#EEF3F1" }}>
                     {history.map(h => (
                       <div key={h.id} className="flex items-center gap-2 text-xs text-gray-400 py-1 pl-7">
                         <Badge color="#9AA5A3">Superseded</Badge>
-                        <a href={h.url} target="_blank" rel="noreferrer" className="underline">{h.title}</a>
+                        <DocumentLink title={h.title} url={h.url} storagePath={h.storagePath} className="underline" />
                         <span>v{h.version} · {h.uploadedAt}</span>
                         {canPublishControlledDocs && <button onClick={() => removeDoc(h.id)} className="ml-auto text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>}
                       </div>
@@ -3006,7 +3086,8 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         </>
       )}
@@ -3030,7 +3111,7 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
                   <div key={d.id} className="flex items-center gap-3 px-5 py-2.5">
                     <UserCheck size={14} color={COLORS.teal} className="shrink-0" />
                     <div className="flex-1 min-w-0">
-                      <a href={d.url} target="_blank" rel="noreferrer" className="text-sm truncate block" style={{ color: COLORS.navy }}>{d.title}</a>
+                      <DocumentLink title={d.title} url={d.url} storagePath={d.storagePath} className="text-sm truncate block" />
                       <div className="text-xs text-gray-400 truncate">{d.category} · Uploaded {d.uploadedAt}{d.notes ? ` · ${d.notes}` : ""}</div>
                     </div>
                     {canEdit && <button onClick={() => removeDoc(d.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
@@ -3058,7 +3139,7 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
               <div key={d.id} className="flex items-center gap-3 px-5 py-3">
                 <Paperclip size={15} color={COLORS.teal} className="shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <a href={d.url} target="_blank" rel="noreferrer" className="text-sm font-medium truncate block" style={{ color: COLORS.navy }}>{d.title}</a>
+                  <DocumentLink title={d.title} url={d.url} storagePath={d.storagePath} className="text-sm font-medium truncate block" />
                   <div className="text-xs text-gray-400 truncate">{d.relatedTo}{d.relatedTo ? " · " : ""}Uploaded by {d.uploadedBy} · {d.uploadedAt}</div>
                 </div>
                 <Badge color={COLORS.teal}>{d.category}</Badge>
@@ -3076,9 +3157,32 @@ function ControlledDocumentForm({ onSave, onCancel, error, existingCodes }) {
   const [documentCode, setDocumentCode] = useState("");
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState(CONTROLLED_DOCUMENT_CATEGORIES[0]);
+  const [mode, setMode] = useState("upload"); // "upload" | "link"
   const [url, setUrl] = useState("");
+  const [file, setFile] = useState(null);
   const [notes, setNotes] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
   const isNewVersion = existingCodes.includes(documentCode.trim());
+
+  const handleSave = async () => {
+    if (!title.trim()) return;
+    if (mode === "link" && !url.trim()) return;
+    if (mode === "upload" && !file) return;
+    setUploadError("");
+    setUploading(true);
+    try {
+      let storagePath = "";
+      if (mode === "upload") {
+        storagePath = await storageApi.uploadDocumentFile(file, "controlled");
+      }
+      await onSave({ documentCode: documentCode.trim(), title, category, url: mode === "link" ? url : "", storagePath, notes, relatedTo: "" });
+    } catch (e) {
+      setUploadError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   return (
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
@@ -3099,14 +3203,26 @@ function ControlledDocumentForm({ onSave, onCancel, error, existingCodes }) {
           </select>
         </Field>
         <Field label="Title"><input className={inputCls} style={inputStyle} value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Manual Differential Counting" /></Field>
-        <Field label="Link (Drive / SharePoint / etc.)"><input className={inputCls} style={inputStyle} value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" /></Field>
+        <Field label="File">
+          <div className="flex gap-2 mb-1.5">
+            <button type="button" onClick={() => setMode("upload")} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: mode === "upload" ? COLORS.teal : "#D8E5E1", color: mode === "upload" ? COLORS.teal : "#9AA5A3", background: mode === "upload" ? COLORS.mint : "white" }}>Upload file</button>
+            <button type="button" onClick={() => setMode("link")} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: mode === "link" ? COLORS.teal : "#D8E5E1", color: mode === "link" ? COLORS.teal : "#9AA5A3", background: mode === "link" ? COLORS.mint : "white" }}>Link instead</button>
+          </div>
+          {mode === "upload" ? (
+            <input type="file" onChange={e => setFile(e.target.files[0] || null)} className="text-xs" />
+          ) : (
+            <input className={inputCls} style={inputStyle} value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" />
+          )}
+        </Field>
       </div>
       <Field label="Notes (optional)"><textarea className={inputCls} style={inputStyle} rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What changed in this version, effective date, etc." /></Field>
-      {error && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{error}</div>}
+      {(error || uploadError) && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{error || uploadError}</div>}
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button onClick={() => title.trim() && url.trim() && onSave({ documentCode: documentCode.trim(), title, category, url, notes, relatedTo: "" })}
-          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Publish</button>
+        <button disabled={uploading} onClick={handleSave}
+          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-50" style={{ background: COLORS.teal }}>
+          <Save size={14} /> {uploading ? "Publishing…" : "Publish"}
+        </button>
       </div>
     </div>
   );
@@ -3116,8 +3232,30 @@ function PersonalDocumentForm({ personnel, onSave, onCancel }) {
   const [personnelName, setPersonnelName] = useState("");
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState(PERSONAL_DOCUMENT_CATEGORIES[0]);
+  const [mode, setMode] = useState("upload");
   const [url, setUrl] = useState("");
+  const [file, setFile] = useState(null);
   const [notes, setNotes] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+
+  const handleSave = async () => {
+    if (!personnelName || !title.trim()) return;
+    if (mode === "link" && !url.trim()) return;
+    if (mode === "upload" && !file) return;
+    setUploadError("");
+    setUploading(true);
+    try {
+      let storagePath = "";
+      if (mode === "upload") storagePath = await storageApi.uploadDocumentFile(file, "personal");
+      onSave({ personnelName, title, category, url: mode === "link" ? url : "", storagePath, notes, relatedTo: "" });
+    } catch (e) {
+      setUploadError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
       <div className="grid grid-cols-2 gap-3">
@@ -3132,13 +3270,26 @@ function PersonalDocumentForm({ personnel, onSave, onCancel }) {
           </select>
         </Field>
         <Field label="Title"><input className={inputCls} style={inputStyle} value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. MLS Licence — Aishath Shifa" /></Field>
-        <Field label="Link (Drive / SharePoint / etc.)"><input className={inputCls} style={inputStyle} value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" /></Field>
+        <Field label="File">
+          <div className="flex gap-2 mb-1.5">
+            <button type="button" onClick={() => setMode("upload")} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: mode === "upload" ? COLORS.teal : "#D8E5E1", color: mode === "upload" ? COLORS.teal : "#9AA5A3", background: mode === "upload" ? COLORS.mint : "white" }}>Upload file</button>
+            <button type="button" onClick={() => setMode("link")} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: mode === "link" ? COLORS.teal : "#D8E5E1", color: mode === "link" ? COLORS.teal : "#9AA5A3", background: mode === "link" ? COLORS.mint : "white" }}>Link instead</button>
+          </div>
+          {mode === "upload" ? (
+            <input type="file" onChange={e => setFile(e.target.files[0] || null)} className="text-xs" />
+          ) : (
+            <input className={inputCls} style={inputStyle} value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" />
+          )}
+        </Field>
       </div>
       <Field label="Notes (optional)"><input className={inputCls} style={inputStyle} value={notes} onChange={e => setNotes(e.target.value)} placeholder="e.g. Expires 2027-04-01" /></Field>
+      {uploadError && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{uploadError}</div>}
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button onClick={() => personnelName && title.trim() && url.trim() && onSave({ personnelName, title, category, url, notes, relatedTo: "" })}
-          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Upload</button>
+        <button disabled={uploading} onClick={handleSave}
+          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-50" style={{ background: COLORS.teal }}>
+          <Save size={14} /> {uploading ? "Uploading…" : "Upload"}
+        </button>
       </div>
     </div>
   );
@@ -3148,8 +3299,30 @@ function GeneralDocumentForm({ onSave, onCancel }) {
   const [title, setTitle] = useState("");
   const [category, setCategory] = useState(GENERAL_DOCUMENT_CATEGORIES[0]);
   const [relatedTo, setRelatedTo] = useState("");
+  const [mode, setMode] = useState("upload");
   const [url, setUrl] = useState("");
+  const [file, setFile] = useState(null);
   const [notes, setNotes] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+
+  const handleSave = async () => {
+    if (!title.trim()) return;
+    if (mode === "link" && !url.trim()) return;
+    if (mode === "upload" && !file) return;
+    setUploadError("");
+    setUploading(true);
+    try {
+      let storagePath = "";
+      if (mode === "upload") storagePath = await storageApi.uploadDocumentFile(file, "general");
+      onSave({ title, category, relatedTo, url: mode === "link" ? url : "", storagePath, notes });
+    } catch (e) {
+      setUploadError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
       <div className="grid grid-cols-2 gap-3">
@@ -3160,13 +3333,26 @@ function GeneralDocumentForm({ onSave, onCancel }) {
           </select>
         </Field>
         <Field label="Related to (optional)"><input className={inputCls} style={inputStyle} value={relatedTo} onChange={e => setRelatedTo(e.target.value)} placeholder="e.g. Medonic M51, Clause 6.4, NC-003" /></Field>
-        <Field label="Link (Drive / SharePoint / etc.)"><input className={inputCls} style={inputStyle} value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" /></Field>
+        <Field label="File">
+          <div className="flex gap-2 mb-1.5">
+            <button type="button" onClick={() => setMode("upload")} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: mode === "upload" ? COLORS.teal : "#D8E5E1", color: mode === "upload" ? COLORS.teal : "#9AA5A3", background: mode === "upload" ? COLORS.mint : "white" }}>Upload file</button>
+            <button type="button" onClick={() => setMode("link")} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: mode === "link" ? COLORS.teal : "#D8E5E1", color: mode === "link" ? COLORS.teal : "#9AA5A3", background: mode === "link" ? COLORS.mint : "white" }}>Link instead</button>
+          </div>
+          {mode === "upload" ? (
+            <input type="file" onChange={e => setFile(e.target.files[0] || null)} className="text-xs" />
+          ) : (
+            <input className={inputCls} style={inputStyle} value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" />
+          )}
+        </Field>
       </div>
       <Field label="Notes"><textarea className={inputCls} style={inputStyle} rows={2} value={notes} onChange={e => setNotes(e.target.value)} /></Field>
+      {uploadError && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{uploadError}</div>}
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button onClick={() => title.trim() && url.trim() && onSave({ title, category, relatedTo, url, notes })}
-          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Save link</button>
+        <button disabled={uploading} onClick={handleSave}
+          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-50" style={{ background: COLORS.teal }}>
+          <Save size={14} /> {uploading ? "Uploading…" : "Save"}
+        </button>
       </div>
     </div>
   );

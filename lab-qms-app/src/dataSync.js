@@ -356,6 +356,7 @@ export const documentFromDb = (row, personnel) => ({
   category: row.category || "",
   relatedTo: row.related_to || "",
   url: row.url,
+  storagePath: row.storage_path || "",
   uploadedBy: idToName(personnel, row.uploaded_by),
   uploadedAt: (row.uploaded_at || "").slice(0, 10),
   notes: row.notes || "",
@@ -368,9 +369,18 @@ export const documentToDb = (d, personnel) => ({
   title: d.title,
   category: d.category || null,
   related_to: d.relatedTo || null,
-  url: d.url,
+  url: d.url || null,
+  storage_path: d.storagePath || null,
   uploaded_by: nameToId(personnel, d.uploadedBy),
   notes: d.notes || null,
   document_code: d.documentCode || null,
   personnel_id: nameToId(personnel, d.personnelName),
+});
+
+// ---------------- document_acknowledgments ----------------
+export const acknowledgmentFromDb = (row, personnel) => ({
+  id: row.id,
+  documentId: row.document_id,
+  personnelName: idToName(personnel, row.personnel_id),
+  acknowledgedAt: row.acknowledged_at,
 });
