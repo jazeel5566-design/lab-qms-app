@@ -420,6 +420,13 @@ export default function App() {
     setTasks(tasks.map(t => (t.id === id ? { ...t, status } : t)));
     try {
       await taskApi.setTaskStatus(id, status);
+      if (status === "Done") {
+        const completedTask = tasks.find(t => t.id === id);
+        if (completedTask?.isRecurring) {
+          const newRow = await taskApi.createNextRecurrence(id);
+          if (newRow) setTasks(current => [taskFromDb(newRow, personnel), ...current]);
+        }
+      }
     } catch (e) {
       alert("Could not update task status.\n\n" + e.message);
       setTasks(prev);
@@ -502,6 +509,22 @@ export default function App() {
     update: (id, row) => eqaDocApi.updateEqaEvent(id, row),
     remove: (id) => eqaDocApi.deleteEqaEvent(id),
   });
+
+  /** One click to raise an NC directly from an Unsatisfactory EQA result, pre-filled — and records the link back on the EQA row so it's never accidentally raised twice. */
+  const createNcFromEqaAction = (eqaEvent) => {
+    const ncNumber = `NC-${String(ncs.length + 1).padStart(3, "0")}`;
+    const sdiText = (eqaEvent.sdi !== null && eqaEvent.sdi !== undefined) ? Number(eqaEvent.sdi).toFixed(2) : "n/a";
+    const newNc = {
+      id: uid(), ncNumber, status: "Open", dateRaised: todayISO(),
+      title: `EQA/PT failure — ${eqaEvent.parameter} (${eqaEvent.discipline})`,
+      description: `Unsatisfactory EQA result for ${eqaEvent.parameter}, ${eqaEvent.provider || "provider not specified"}${eqaEvent.cycle ? " " + eqaEvent.cycle : ""}. Lab result ${eqaEvent.labResult}, peer mean ${eqaEvent.peerMean}, SDI ${sdiText}.`,
+      source: "EQA/PT failure", severity: "Major",
+      rootCause: "", correctiveAction: "", preventiveAction: "", evidence: "", verifiedBy: "", closedDate: "",
+      effectivenessCheckDue: "", effectivenessCheckResult: "", effectivenessNotes: "", effectivenessVerifiedBy: "",
+    };
+    updateNcs([newNc, ...ncs]);
+    updateEqaEvents(eqaEvents.map(e => e.id === eqaEvent.id ? { ...e, linkedNcId: newNc.id } : e));
+  };
 
   const updateDocuments = makeListUpdater(setDocuments, () => documents, (d) => documentToDb(d, personnel), (r) => documentFromDb(r, personnel), {
     create: (row) => eqaDocApi.createDocument(row),
@@ -599,13 +622,14 @@ export default function App() {
 
     const controlLotsExpired = qcControls.filter(c => c.expiryDate && c.expiryDate < todayISO()).length;
     const controlLotsExpiringSoon = qcControls.filter(c => c.expiryDate && c.expiryDate >= todayISO() && c.expiryDate <= in30ISO).length;
+    const documentsOverdueForReview = documents.filter(d => d.isCurrent && d.nextReviewDate && d.nextReviewDate < todayISO()).length;
 
     return {
       counts, openTasks, overdueTasks, openNcs, criticalNcs, totalClauses: ALL_SUBCLAUSES.length,
       competencyOverdue, competencyDueSoon, equipmentOverdue, equipmentDueSoon,
-      iqcUnauthorizedViolations, eqaUnsatisfactory, controlLotsExpired, controlLotsExpiringSoon,
+      iqcUnauthorizedViolations, eqaUnsatisfactory, controlLotsExpired, controlLotsExpiringSoon, documentsOverdueForReview,
     };
-  }, [clauseStatus, tasks, ncs, competency, equipmentRecords, qcParameters, qcControls, qcRuns, eqaEvents]);
+  }, [clauseStatus, tasks, ncs, competency, equipmentRecords, qcParameters, qcControls, qcRuns, eqaEvents, documents]);
 
   if (!authChecked) {
     return <div className="min-h-screen flex items-center justify-center" style={{ background: COLORS.bg }}>
@@ -715,7 +739,8 @@ export default function App() {
           qcRuns={qcRuns} updateQcRuns={updateQcRuns} personnel={personnel}
           canEdit={canEdit} canAuthorizeIQC={canAuthorizeIQC} currentUser={currentUser}
           authorizeQcRunAction={authorizeQcRunAction} bulkImportQcRuns={bulkImportQcRuns} />}
-        {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit} />}
+        {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit}
+          ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} />}
         {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} />}
         {tab === "equipment" && <Equipment equipment={equipment} updateEquipment={updateEquipment}
           equipmentRecords={equipmentRecords} updateEquipmentRecords={updateEquipmentRecords} personnel={personnel} canEdit={canEdit} />}
@@ -762,6 +787,7 @@ function Dashboard({ stats, tasks, ncs, personnel, setTab, competency, equipment
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         <StatCard label="Control lots expired" value={stats.controlLotsExpired} sub={`${stats.controlLotsExpiringSoon} expiring within 30 days`} color={stats.controlLotsExpired ? COLORS.red : COLORS.teal} />
+        <StatCard label="Documents overdue for review" value={stats.documentsOverdueForReview} sub="controlled documents past their next review date" color={stats.documentsOverdueForReview ? COLORS.red : COLORS.teal} />
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-8">
@@ -1053,6 +1079,7 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, personnel, canEdit, ca
                 <div className="text-sm" style={{ textDecoration: t.status === "Done" ? "line-through" : "none", color: t.status === "Done" ? "#9AA5A3" : COLORS.ink }}>{t.title}</div>
                 <div className="text-xs text-gray-400">{t.assignedTo || "Unassigned"} {t.clauseId && `· Clause ${t.clauseId}`}</div>
               </div>
+              {t.isRecurring && <Badge color={COLORS.teal}>Recurring · every {t.recurrenceIntervalDays}d</Badge>}
               <select value={t.status} disabled={!canEdit} onChange={e => setTaskStatusAction(t.id, e.target.value)} className="text-xs border rounded-md px-2 py-1 disabled:opacity-50" style={{ borderColor: "#D8E5E1" }}>
                 {TASK_STATUS.map(s => <option key={s}>{s}</option>)}
               </select>
@@ -1073,6 +1100,8 @@ function TaskForm({ personnel, onSave, onCancel }) {
   const [dueDate, setDueDate] = useState("");
   const [priority, setPriority] = useState("Medium");
   const [clauseId, setClauseId] = useState("");
+  const [isRecurring, setIsRecurring] = useState(false);
+  const [recurrenceIntervalDays, setRecurrenceIntervalDays] = useState(30);
   return (
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
       <Field label="Task"><input className={inputCls} style={inputStyle} value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Update SOP for sample rejection criteria" /></Field>
@@ -1094,9 +1123,21 @@ function TaskForm({ personnel, onSave, onCancel }) {
           </select>
         </Field>
       </div>
+      <div className="flex items-center gap-2 mb-2">
+        <input type="checkbox" id="recurring-task" checked={isRecurring} onChange={e => setIsRecurring(e.target.checked)} />
+        <label htmlFor="recurring-task" className="text-xs text-gray-600">Recurring — automatically create the next one when this is marked Done</label>
+      </div>
+      {isRecurring && (
+        <Field label="Repeat every (days)">
+          <input type="number" min="1" className={inputCls} style={{ ...inputStyle, maxWidth: 120 }} value={recurrenceIntervalDays} onChange={e => setRecurrenceIntervalDays(e.target.value)} />
+        </Field>
+      )}
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button onClick={() => title.trim() && onSave({ title, assignedTo, dueDate, priority, clauseId })}
+        <button onClick={() => title.trim() && onSave({
+          title, assignedTo, dueDate, priority, clauseId,
+          isRecurring, recurrenceIntervalDays: isRecurring ? Number(recurrenceIntervalDays) || 30 : null,
+        })}
           className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Save task</button>
       </div>
     </div>
@@ -1107,6 +1148,7 @@ function TaskForm({ personnel, onSave, onCancel }) {
 function NCRegister({ ncs, updateNcs, personnel, canEdit }) {
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
+  const [showTrends, setShowTrends] = useState(false);
 
   const nextNcNumber = () => `NC-${String(ncs.length + 1).padStart(3, "0")}`;
 
@@ -1123,17 +1165,83 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit }) {
   const setNc = (id, patch) => updateNcs(ncs.map(n => n.id === id ? { ...n, ...patch } : n));
   const removeNc = (id) => updateNcs(ncs.filter(n => n.id !== id));
 
+  const trendData = useMemo(() => {
+    const byMonth = {};
+    ncs.forEach(n => {
+      const month = (n.dateRaised || "").slice(0, 7); // YYYY-MM
+      if (!month) return;
+      byMonth[month] = (byMonth[month] || 0) + 1;
+    });
+    return Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([month, count]) => ({ month, count }));
+  }, [ncs]);
+
+  const bySource = useMemo(() => {
+    const counts = {};
+    ncs.forEach(n => { const s = n.source || "Not specified"; counts[s] = (counts[s] || 0) + 1; });
+    return Object.entries(counts).sort(([, a], [, b]) => b - a);
+  }, [ncs]);
+
+  const bySeverity = useMemo(() => {
+    const counts = { Critical: 0, Major: 0, Minor: 0 };
+    ncs.forEach(n => { if (n.severity) counts[n.severity] = (counts[n.severity] || 0) + 1; });
+    return counts;
+  }, [ncs]);
+
   return (
     <div className="p-8 max-w-5xl">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Non-conformities & CAPA</h1>
-        {canEdit && (
-          <button onClick={() => setShowForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
-            <Plus size={14} /> Log nonconformity
+        <div className="flex gap-2">
+          <button onClick={() => setShowTrends(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+            <Activity size={14} /> {showTrends ? "Hide" : "Show"} trends
           </button>
-        )}
+          {canEdit && (
+            <button onClick={() => setShowForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
+              <Plus size={14} /> Log nonconformity
+            </button>
+          )}
+        </div>
       </div>
       <p className="text-sm text-gray-500 mb-4">Full lifecycle: raise, investigate root cause, implement corrective/preventive action, verify, and close.</p>
+
+      {showTrends && (
+        <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+          <div className="text-sm font-semibold mb-3" style={{ color: COLORS.navy }}>NCs raised per month</div>
+          {trendData.length === 0 ? (
+            <Empty text="Not enough data yet to show a trend." />
+          ) : (
+            <div style={{ width: "100%", height: 180 }}>
+              <ResponsiveContainer>
+                <LineChart data={trendData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EEF3F1" />
+                  <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="count" stroke={COLORS.teal} strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-4 mt-4">
+            <div>
+              <div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>By source</div>
+              {bySource.length === 0 ? <div className="text-xs text-gray-400">No data yet</div> : bySource.map(([source, count]) => (
+                <div key={source} className="flex items-center justify-between text-xs text-gray-600 py-0.5">
+                  <span>{source}</span><span className="font-medium">{count}</span>
+                </div>
+              ))}
+            </div>
+            <div>
+              <div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>By severity</div>
+              {Object.entries(bySeverity).map(([sev, count]) => (
+                <div key={sev} className="flex items-center justify-between text-xs text-gray-600 py-0.5">
+                  <span>{sev}</span><span className="font-medium">{count}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {showForm && canEdit && <NcForm personnel={personnel} onCancel={() => setShowForm(false)} onSave={addNc} />}
 
@@ -1658,6 +1766,7 @@ function Competency({ competency, updateCompetency, personnel, canEdit }) {
   const [showForm, setShowForm] = useState(false);
   const [filterPerson, setFilterPerson] = useState("All");
   const [filterType, setFilterType] = useState("All");
+  const [view, setView] = useState("list");
 
   const addRecord = (draft) => {
     updateCompetency([{ id: uid(), createdAt: todayISO(), ...draft }, ...competency]);
@@ -1679,18 +1788,63 @@ function Competency({ competency, updateCompetency, personnel, canEdit }) {
     return { label: "On track", color: COLORS.teal };
   };
 
+  const procedures = useMemo(() => [...new Set(competency.map(c => c.title).filter(Boolean))].sort(), [competency]);
+  const matrix = useMemo(() => {
+    // For each person x procedure, keep only their MOST RECENT record (by date), since that's what's actually current.
+    const latest = {};
+    competency.forEach(c => {
+      const key = `${c.personnelName}||${c.title}`;
+      if (!latest[key] || (c.date || "") > (latest[key].date || "")) latest[key] = c;
+    });
+    return latest;
+  }, [competency]);
+
   return (
     <div className="p-8 max-w-5xl">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Staff competency & training</h1>
-        {canEdit && (
-          <button onClick={() => setShowForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
-            <Plus size={14} /> Log record
-          </button>
-        )}
+        <div className="flex gap-2">
+          <div className="flex gap-1 border rounded-md p-0.5" style={{ borderColor: "#D8E5E1" }}>
+            <button onClick={() => setView("list")} className="text-xs px-2 py-1 rounded" style={{ background: view === "list" ? COLORS.mint : "transparent", color: view === "list" ? COLORS.teal : "#9AA5A3" }}>List</button>
+            <button onClick={() => setView("matrix")} className="text-xs px-2 py-1 rounded" style={{ background: view === "matrix" ? COLORS.mint : "transparent", color: view === "matrix" ? COLORS.teal : "#9AA5A3" }}>Matrix</button>
+          </div>
+          {canEdit && view === "list" && (
+            <button onClick={() => setShowForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
+              <Plus size={14} /> Log record
+            </button>
+          )}
+        </div>
       </div>
       <p className="text-sm text-gray-500 mb-4">Training, induction, and competency assessment records supporting ISO 15189:2022 Clause 6.1 (Personnel).</p>
 
+      {view === "matrix" ? (
+        procedures.length === 0 ? <Empty text="No competency records yet — matrix will populate once records exist." /> : (
+          <div className="bg-white rounded-lg border overflow-x-auto" style={{ borderColor: "#E1EBE8" }}>
+            <table className="text-xs w-full">
+              <thead>
+                <tr style={{ background: COLORS.navy }}>
+                  <th className="text-left px-3 py-2 text-white sticky left-0" style={{ background: COLORS.navy }}>Staff</th>
+                  {procedures.map(p => <th key={p} className="text-left px-3 py-2 text-white whitespace-nowrap">{p}</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {personnel.map((p, i) => (
+                  <tr key={p.id} style={{ background: i % 2 ? COLORS.bg : "white" }}>
+                    <td className="px-3 py-2 font-medium whitespace-nowrap sticky left-0" style={{ background: i % 2 ? COLORS.bg : "white", color: COLORS.navy }}>{p.name}</td>
+                    {procedures.map(proc => {
+                      const rec = matrix[`${p.name}||${proc}`];
+                      if (!rec) return <td key={proc} className="px-3 py-2 text-gray-300">— never assessed</td>;
+                      const s = statusOf(rec);
+                      return <td key={proc} className="px-3 py-2"><Badge color={s.color}>{s.label}{rec.dueDate ? ` · ${rec.dueDate}` : ""}</Badge></td>;
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )
+      ) : (
+      <>
       <div className="flex gap-2 mb-4">
         <select value={filterPerson} onChange={e => setFilterPerson(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
           <option>All</option>{personnel.map(p => <option key={p.id}>{p.name}</option>)}
@@ -1726,6 +1880,8 @@ function Competency({ competency, updateCompetency, personnel, canEdit }) {
           );
         })}
       </div>
+      </>
+      )}
     </div>
   );
 }
@@ -2704,7 +2860,7 @@ function RunForm({ controls, personnel, onSave, onCancel }) {
 }
 
 // ---------------- EQAS (Clause 7.3.7.3 External Quality Assessment) ----------------
-function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit }) {
+function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction }) {
   const [showForm, setShowForm] = useState(false);
   const [filterDiscipline, setFilterDiscipline] = useState("All");
 
@@ -2761,6 +2917,15 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit }) {
               Lab result: {e.labResult} {e.peerMean !== "" && e.peerMean !== undefined ? `· Peer mean ${e.peerMean} · Peer SD ${e.peerSD}` : ""}
               {e.sdi !== null && e.sdi !== undefined ? ` · SDI ${Number(e.sdi).toFixed(2)}` : ""}
             </div>
+            {e.evaluation === "Unsatisfactory" && (
+              e.linkedNcId ? (
+                <div className="mt-1"><Badge color={COLORS.teal}>{ncs.find(n => n.id === e.linkedNcId)?.ncNumber || "NC"} raised from this result</Badge></div>
+              ) : canEdit && (
+                <button onClick={() => createNcFromEqaAction(e)} className="mt-1 text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.red, color: COLORS.red }}>
+                  Create NC from this result
+                </button>
+              )
+            )}
             {e.notes && <div className="text-xs text-gray-400 mt-1">{e.notes}</div>}
           </div>
         ))}
@@ -3038,6 +3203,9 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
                     <DocumentLink title={current.title} url={current.url} storagePath={current.storagePath} />
                     <div className="text-xs text-gray-400 truncate">
                       {current.documentCode ? `${current.documentCode} · ` : ""}v{current.version} (current) · Published by {current.uploadedBy} · {current.uploadedAt}
+                      {current.nextReviewDate && (
+                        <span style={{ color: current.nextReviewDate < todayISO() ? COLORS.red : "inherit" }}> · {current.nextReviewDate < todayISO() ? "Review overdue" : "Next review"} {current.nextReviewDate}</span>
+                      )}
                     </div>
                   </div>
                   <Badge color={COLORS.teal}>{current.category}</Badge>
@@ -3161,6 +3329,7 @@ function ControlledDocumentForm({ onSave, onCancel, error, existingCodes }) {
   const [url, setUrl] = useState("");
   const [file, setFile] = useState(null);
   const [notes, setNotes] = useState("");
+  const [nextReviewDate, setNextReviewDate] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const isNewVersion = existingCodes.includes(documentCode.trim());
@@ -3176,7 +3345,7 @@ function ControlledDocumentForm({ onSave, onCancel, error, existingCodes }) {
       if (mode === "upload") {
         storagePath = await storageApi.uploadDocumentFile(file, "controlled");
       }
-      await onSave({ documentCode: documentCode.trim(), title, category, url: mode === "link" ? url : "", storagePath, notes, relatedTo: "" });
+      await onSave({ documentCode: documentCode.trim(), title, category, url: mode === "link" ? url : "", storagePath, notes, nextReviewDate, relatedTo: "" });
     } catch (e) {
       setUploadError(e.message);
     } finally {
@@ -3216,6 +3385,7 @@ function ControlledDocumentForm({ onSave, onCancel, error, existingCodes }) {
         </Field>
       </div>
       <Field label="Notes (optional)"><textarea className={inputCls} style={inputStyle} rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="What changed in this version, effective date, etc." /></Field>
+      <Field label="Next review due (optional)"><input type="date" className={inputCls} style={{ ...inputStyle, maxWidth: 200 }} value={nextReviewDate} onChange={e => setNextReviewDate(e.target.value)} /></Field>
       {(error || uploadError) && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{error || uploadError}</div>}
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
