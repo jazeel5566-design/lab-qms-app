@@ -3128,6 +3128,8 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
   const [showGeneralForm, setShowGeneralForm] = useState(false);
   const [expandedCode, setExpandedCode] = useState(null);
   const [publishError, setPublishError] = useState("");
+  const [showReportPicker, setShowReportPicker] = useState(false);
+  const [selectedReportDocIds, setSelectedReportDocIds] = useState([]);
 
   const controlledDocs = documents.filter(d => CONTROLLED_DOCUMENT_CATEGORIES.includes(d.category));
   const personalDocs = documents.filter(d => PERSONAL_DOCUMENT_CATEGORIES.includes(d.category));
@@ -3153,31 +3155,33 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
 
   const removeDoc = (id) => updateDocuments(documents.filter(d => d.id !== id));
 
-  const buildAcknowledgmentReportRows = () => {
+  const buildAcknowledgmentReportRows = (docIds) => {
     const rows = [];
-    controlledList.forEach(({ current }) => {
-      personnel.forEach(p => {
-        const ack = documentAcknowledgments.find(a => a.documentId === current.id && a.personnelName === p.name);
-        rows.push({
-          "Document Code": current.documentCode || "",
-          "Title": current.title,
-          "Version": current.version,
-          "Category": current.category,
-          "Staff": p.name,
-          "Acknowledged": ack ? "Yes" : "No",
-          "Acknowledged Date": ack ? (ack.acknowledgedAt || "").slice(0, 10) : "",
+    controlledList
+      .filter(({ current }) => docIds.includes(current.id))
+      .forEach(({ current }) => {
+        personnel.forEach(p => {
+          const ack = documentAcknowledgments.find(a => a.documentId === current.id && a.personnelName === p.name);
+          rows.push({
+            "Document Code": current.documentCode || "",
+            "Title": current.title,
+            "Version": current.version,
+            "Category": current.category,
+            "Staff": p.name,
+            "Acknowledged": ack ? "Yes" : "No",
+            "Acknowledged Date": ack ? (ack.acknowledgedAt || "").slice(0, 10) : "",
+          });
         });
       });
-    });
     return rows;
   };
 
-  const downloadAcknowledgmentExcel = () => {
-    exportRowsToExcel(buildAcknowledgmentReportRows(), "Acknowledgments", "document-acknowledgment-report.xlsx");
+  const downloadAcknowledgmentExcel = (docIds) => {
+    exportRowsToExcel(buildAcknowledgmentReportRows(docIds), "Acknowledgments", "document-acknowledgment-report.xlsx");
   };
 
-  const printAcknowledgmentReport = () => {
-    const rows = buildAcknowledgmentReportRows();
+  const printAcknowledgmentReport = (docIds) => {
+    const rows = buildAcknowledgmentReportRows(docIds);
     const w = window.open("", "_blank");
     if (!w) { alert("Please allow pop-ups for this site to print the report."); return; }
     const tableRows = rows.map(r => `
@@ -3261,15 +3265,42 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
               <button onClick={() => setShowControlledForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
                 <Plus size={14} /> Publish SOP / QSP / Policy / Manual
               </button>
-              <button onClick={downloadAcknowledgmentExcel} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-                <Download size={14} /> Acknowledgment report (Excel)
-              </button>
-              <button onClick={printAcknowledgmentReport} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-                <Download size={14} /> Acknowledgment report (PDF)
+              <button onClick={() => { setShowReportPicker(v => !v); setSelectedReportDocIds(controlledList.map(({ current }) => current.id)); }}
+                className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                <Download size={14} /> Acknowledgment report
               </button>
             </div>
           ) : (
             <p className="text-xs text-gray-400 mb-3">Publishing controlled documents is limited to the QA Manager, their deputy, or an Admin.</p>
+          )}
+          {showReportPicker && canPublishControlledDocs && (
+            <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+              <div className="text-sm font-semibold mb-2" style={{ color: COLORS.navy }}>Choose which documents to include</div>
+              <div className="flex gap-3 mb-2 text-xs">
+                <button onClick={() => setSelectedReportDocIds(controlledList.map(({ current }) => current.id))} className="underline" style={{ color: COLORS.teal }}>Select all</button>
+                <button onClick={() => setSelectedReportDocIds([])} className="underline text-gray-400">Clear</button>
+              </div>
+              <div className="space-y-1 mb-4 max-h-52 overflow-y-auto">
+                {controlledList.length === 0 && <div className="text-xs text-gray-400">No controlled documents published yet.</div>}
+                {controlledList.map(({ current }) => (
+                  <label key={current.id} className="flex items-center gap-2 text-sm py-0.5">
+                    <input type="checkbox" checked={selectedReportDocIds.includes(current.id)}
+                      onChange={e => setSelectedReportDocIds(prev => e.target.checked ? [...prev, current.id] : prev.filter(id => id !== current.id))} />
+                    <span>{current.title}{current.documentCode ? ` (${current.documentCode})` : ""}</span>
+                  </label>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button disabled={selectedReportDocIds.length === 0} onClick={() => downloadAcknowledgmentExcel(selectedReportDocIds)}
+                  className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border disabled:opacity-40" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                  <Download size={14} /> Download Excel ({selectedReportDocIds.length} selected)
+                </button>
+                <button disabled={selectedReportDocIds.length === 0} onClick={() => printAcknowledgmentReport(selectedReportDocIds)}
+                  className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border disabled:opacity-40" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                  <Download size={14} /> Print / Save as PDF ({selectedReportDocIds.length} selected)
+                </button>
+              </div>
+            </div>
           )}
           {showControlledForm && canPublishControlledDocs && (
             <ControlledDocumentForm onCancel={() => { setShowControlledForm(false); setPublishError(""); }} onSave={handlePublish}
