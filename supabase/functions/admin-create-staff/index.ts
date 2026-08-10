@@ -11,22 +11,47 @@
 // Requires the project's SUPABASE_SERVICE_ROLE_KEY to be set as a secret
 // (Supabase sets SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY automatically for
 // Edge Functions — no manual secret needed for those two).
+//
+// CORS: browsers require an explicit "yes, you may call this" response
+// (a preflight OPTIONS request) before they'll allow a webpage to call this
+// function at all. Every response below — including errors — must include
+// the corsHeaders, or the browser blocks the request before your code even
+// runs, surfacing as a generic "Failed to send a request to the Edge
+// Function" with no further detail.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
+  // Browsers send this automatically before the real request; must succeed for CORS to work at all.
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   try {
     if (req.method !== "POST") {
-      return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405 });
+      return json({ error: "Method not allowed" }, 405);
     }
 
     const authHeader = req.headers.get("Authorization") ?? "";
     const callerJwt = authHeader.replace("Bearer ", "");
     if (!callerJwt) {
-      return new Response(JSON.stringify({ error: "Missing Authorization header" }), { status: 401 });
+      return json({ error: "Missing Authorization header" }, 401);
     }
 
     // Client bound to the CALLER's JWT — used only to find out who's calling.
@@ -35,7 +60,7 @@ Deno.serve(async (req) => {
     });
     const { data: { user: caller }, error: callerErr } = await callerClient.auth.getUser(callerJwt);
     if (callerErr || !caller) {
-      return new Response(JSON.stringify({ error: "Could not verify caller" }), { status: 401 });
+      return json({ error: "Could not verify caller" }, 401);
     }
 
     // Service-role client — bypasses RLS, only used for privileged operations below.
@@ -47,18 +72,18 @@ Deno.serve(async (req) => {
       .eq("auth_user_id", caller.id)
       .maybeSingle();
     if (personnelErr || !callerPersonnel || callerPersonnel.access_role !== "Admin") {
-      return new Response(JSON.stringify({ error: "Only an Admin can create new staff accounts." }), { status: 403 });
+      return json({ error: "Only an Admin can create new staff accounts." }, 403);
     }
 
     const body = await req.json();
     const { name, jobTitle, email, recordCardNumber, password, accessRole } = body;
     if (!name || !recordCardNumber || !password || !accessRole) {
-      return new Response(JSON.stringify({ error: "name, recordCardNumber, password, and accessRole are required" }), { status: 400 });
+      return json({ error: "name, recordCardNumber, password, and accessRole are required" }, 400);
     }
 
     const validRoles = ["Admin", "Deputy Admin", "QA Manager", "Deputy QA Manager", "Technologist", "Viewer"];
     if (!validRoles.includes(accessRole)) {
-      return new Response(JSON.stringify({ error: `accessRole must be one of: ${validRoles.join(", ")}` }), { status: 400 });
+      return json({ error: `accessRole must be one of: ${validRoles.join(", ")}` }, 400);
     }
 
     const syntheticEmail = `${recordCardNumber.trim().toLowerCase().replace(/[^a-z0-9._-]/g, "-")}@lab.local`;
@@ -69,7 +94,7 @@ Deno.serve(async (req) => {
       email_confirm: true, // no real inbox exists for @lab.local — mark confirmed immediately
     });
     if (createErr) {
-      return new Response(JSON.stringify({ error: createErr.message }), { status: 400 });
+      return json({ error: createErr.message }, 400);
     }
 
     const { data: person, error: insertErr } = await admin
@@ -88,11 +113,11 @@ Deno.serve(async (req) => {
     if (insertErr) {
       // Roll back the auth user so we don't leave an orphaned login with no personnel row.
       await admin.auth.admin.deleteUser(created.user.id);
-      return new Response(JSON.stringify({ error: insertErr.message }), { status: 400 });
+      return json({ error: insertErr.message }, 400);
     }
 
-    return new Response(JSON.stringify({ person }), { status: 200, headers: { "Content-Type": "application/json" } });
+    return json({ person }, 200);
   } catch (e) {
-    return new Response(JSON.stringify({ error: e.message || "Unknown error" }), { status: 500 });
+    return json({ error: e.message || "Unknown error" }, 500);
   }
 });

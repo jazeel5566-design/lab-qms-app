@@ -7,22 +7,46 @@
 // never be shipped to a client.
 //
 // Deploy with: supabase functions deploy admin-reset-password
+//
+// CORS: browsers require an explicit "yes, you may call this" response
+// (a preflight OPTIONS request) before they'll allow a webpage to call this
+// function at all. Every response below — including errors — must include
+// the corsHeaders, or the browser blocks the request before your code even
+// runs, surfacing as a generic "Failed to send a request to the Edge
+// Function" with no further detail.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+};
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
+
   try {
     if (req.method !== "POST") {
-      return new Response(JSON.stringify({ error: "Method not allowed" }), { status: 405 });
+      return json({ error: "Method not allowed" }, 405);
     }
 
     const authHeader = req.headers.get("Authorization") ?? "";
     const callerJwt = authHeader.replace("Bearer ", "");
     if (!callerJwt) {
-      return new Response(JSON.stringify({ error: "Missing Authorization header" }), { status: 401 });
+      return json({ error: "Missing Authorization header" }, 401);
     }
 
     const callerClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
@@ -30,7 +54,7 @@ Deno.serve(async (req) => {
     });
     const { data: { user: caller }, error: callerErr } = await callerClient.auth.getUser(callerJwt);
     if (callerErr || !caller) {
-      return new Response(JSON.stringify({ error: "Could not verify caller" }), { status: 401 });
+      return json({ error: "Could not verify caller" }, 401);
     }
 
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
@@ -41,12 +65,12 @@ Deno.serve(async (req) => {
       .eq("auth_user_id", caller.id)
       .maybeSingle();
     if (personnelErr || !callerPersonnel || callerPersonnel.access_role !== "Admin") {
-      return new Response(JSON.stringify({ error: "Only an Admin can reset another person's password." }), { status: 403 });
+      return json({ error: "Only an Admin can reset another person's password." }, 403);
     }
 
     const { personnelId, newPassword } = await req.json();
     if (!personnelId || !newPassword || newPassword.length < 6) {
-      return new Response(JSON.stringify({ error: "personnelId and a newPassword of at least 6 characters are required." }), { status: 400 });
+      return json({ error: "personnelId and a newPassword of at least 6 characters are required." }, 400);
     }
 
     const { data: targetPerson, error: targetErr } = await admin
@@ -55,16 +79,16 @@ Deno.serve(async (req) => {
       .eq("id", personnelId)
       .maybeSingle();
     if (targetErr || !targetPerson || !targetPerson.auth_user_id) {
-      return new Response(JSON.stringify({ error: "Could not find that person's login account." }), { status: 404 });
+      return json({ error: "Could not find that person's login account." }, 404);
     }
 
     const { error: updateErr } = await admin.auth.admin.updateUserById(targetPerson.auth_user_id, { password: newPassword });
     if (updateErr) {
-      return new Response(JSON.stringify({ error: updateErr.message }), { status: 400 });
+      return json({ error: updateErr.message }, 400);
     }
 
-    return new Response(JSON.stringify({ ok: true, name: targetPerson.name }), { status: 200, headers: { "Content-Type": "application/json" } });
+    return json({ ok: true, name: targetPerson.name }, 200);
   } catch (e) {
-    return new Response(JSON.stringify({ error: e.message || "Unknown error" }), { status: 500 });
+    return json({ error: e.message || "Unknown error" }, 500);
   }
 });
