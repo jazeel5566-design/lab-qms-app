@@ -217,6 +217,7 @@ function exportRowsToExcel(rows, sheetName, filename) {
   XLSX.utils.book_append_sheet(wb, ws, sheetName.slice(0, 31));
   XLSX.writeFile(wb, filename);
 }
+const escapeHtml = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 function readExcelFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -3152,6 +3153,65 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
 
   const removeDoc = (id) => updateDocuments(documents.filter(d => d.id !== id));
 
+  const buildAcknowledgmentReportRows = () => {
+    const rows = [];
+    controlledList.forEach(({ current }) => {
+      personnel.forEach(p => {
+        const ack = documentAcknowledgments.find(a => a.documentId === current.id && a.personnelName === p.name);
+        rows.push({
+          "Document Code": current.documentCode || "",
+          "Title": current.title,
+          "Version": current.version,
+          "Category": current.category,
+          "Staff": p.name,
+          "Acknowledged": ack ? "Yes" : "No",
+          "Acknowledged Date": ack ? (ack.acknowledgedAt || "").slice(0, 10) : "",
+        });
+      });
+    });
+    return rows;
+  };
+
+  const downloadAcknowledgmentExcel = () => {
+    exportRowsToExcel(buildAcknowledgmentReportRows(), "Acknowledgments", "document-acknowledgment-report.xlsx");
+  };
+
+  const printAcknowledgmentReport = () => {
+    const rows = buildAcknowledgmentReportRows();
+    const w = window.open("", "_blank");
+    if (!w) { alert("Please allow pop-ups for this site to print the report."); return; }
+    const tableRows = rows.map(r => `
+      <tr>
+        <td>${escapeHtml(r["Document Code"])}</td>
+        <td>${escapeHtml(r["Title"])}</td>
+        <td>${escapeHtml(r["Version"])}</td>
+        <td>${escapeHtml(r["Staff"])}</td>
+        <td>${escapeHtml(r["Acknowledged"])}</td>
+        <td>${escapeHtml(r["Acknowledged Date"])}</td>
+      </tr>`).join("");
+    w.document.write(`<!DOCTYPE html><html><head><title>Document Acknowledgment Report</title>
+      <style>
+        body { font-family: -apple-system, system-ui, sans-serif; padding: 32px; color: #0F2A3D; }
+        h1 { font-size: 18px; margin-bottom: 2px; }
+        p.meta { color: #6B7A78; font-size: 12px; margin-top: 0; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #D8E5E1; padding: 6px 10px; font-size: 12px; text-align: left; }
+        th { background: #0F2A3D; color: white; }
+        tr:nth-child(even) td { background: #F6FAF9; }
+      </style></head>
+      <body>
+        <h1>Document Acknowledgment Report</h1>
+        <p class="meta">Lab QMS \u2014 generated ${escapeHtml(new Date().toLocaleString())}</p>
+        <table>
+          <thead><tr><th>Document Code</th><th>Title</th><th>Version</th><th>Staff</th><th>Acknowledged</th><th>Date</th></tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
+
   const handlePublish = async (draft) => {
     setPublishError("");
     try {
@@ -3197,9 +3257,17 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
         <>
           <p className="text-sm text-gray-500 mb-3">SOPs, QSPs, policies, and manuals. Publishing a new version under the same Document Code automatically replaces the current version for everyone — earlier versions stay retrievable under version history. Only Admin, QA Manager, or their deputy can publish.</p>
           {canPublishControlledDocs ? (
-            <button onClick={() => setShowControlledForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white mb-3" style={{ background: COLORS.teal }}>
-              <Plus size={14} /> Publish SOP / QSP / Policy / Manual
-            </button>
+            <div className="flex flex-wrap gap-2 mb-3">
+              <button onClick={() => setShowControlledForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
+                <Plus size={14} /> Publish SOP / QSP / Policy / Manual
+              </button>
+              <button onClick={downloadAcknowledgmentExcel} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                <Download size={14} /> Acknowledgment report (Excel)
+              </button>
+              <button onClick={printAcknowledgmentReport} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                <Download size={14} /> Acknowledgment report (PDF)
+              </button>
+            </div>
           ) : (
             <p className="text-xs text-gray-400 mb-3">Publishing controlled documents is limited to the QA Manager, their deputy, or an Admin.</p>
           )}
