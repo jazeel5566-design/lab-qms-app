@@ -73,12 +73,24 @@ export const personnelToDb = (p) => ({
 
 // ---------------- clause_status ----------------
 export const rowToClauseStatus = (row) => ({
+  id: row.id,
   status: row.status,
   owner: row._ownerName || "",   // filled in by the caller after a personnel lookup — see App.jsx
   ownerId: row.owner_id || null,
   lastReviewed: row.last_reviewed || "",
   notes: row.notes || "",
   evidenceDocumentId: row.evidence_document_id || "",
+});
+
+// ---------------- equipment_downtime ----------------
+export const downtimeFromDb = (row, personnel) => ({
+  id: row.id,
+  equipmentId: row.equipment_id,
+  reason: row.reason,
+  startedAt: row.started_at,
+  resolvedAt: row.resolved_at || "",
+  resolutionNotes: row.resolution_notes || "",
+  reportedBy: idToName(personnel, row.reported_by),
 });
 
 // ---------------- tasks ----------------
