@@ -25,6 +25,7 @@ import * as mgmtReviewApi from "./api/managementReviews.js";
 import * as storageApi from "./api/storage.js";
 import * as ackApi from "./api/documentAcknowledgments.js";
 import * as downtimeApi from "./api/equipmentDowntime.js";
+import * as clauseEvidenceApi from "./api/clauseEvidence.js";
 import * as auditApi from "./api/auditAndBackup.js";
 import {
   syncList, syncClauseStatus, nameToId, idToName, rowToClauseStatus,
@@ -36,7 +37,7 @@ import {
   controlFromDb, controlToDb, runFromDb, runToDb,
   eqaFromDb, eqaToDb, documentFromDb, documentToDb,
   riskFromDb, riskToDb, managementReviewFromDb, managementReviewToDb,
-  acknowledgmentFromDb, downtimeFromDb,
+  acknowledgmentFromDb, downtimeFromDb, clauseEvidenceFromDb,
 } from "./dataSync.js";
 
 // ---------- ISO 15189:2022 clause tree ----------
@@ -289,6 +290,7 @@ export default function App() {
   const [managementReviews, setManagementReviews] = useState([]);
   const [documentAcknowledgments, setDocumentAcknowledgments] = useState([]);
   const [equipmentDowntime, setEquipmentDowntime] = useState([]);
+  const [clauseEvidence, setClauseEvidence] = useState([]);
 
   // Runs exactly once, on first load: is there already a signed-in session
   // (e.g. a returning visitor)? Deliberately does NOT fetch any app data here —
@@ -322,7 +324,7 @@ export default function App() {
         const p = pRows.map(personnelFromDb);
         setPersonnel(p);
 
-        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows] = await Promise.all([
+        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows] = await Promise.all([
           clauseApi.listClauseStatus(),
           taskApi.listTasks(),
           ncApi.listNonconformities(),
@@ -339,6 +341,7 @@ export default function App() {
           mgmtReviewApi.listManagementReviews(),
           ackApi.listAllAcknowledgments(),
           downtimeApi.listEquipmentDowntime(),
+          clauseEvidenceApi.listClauseEvidence(),
         ]);
 
         const cs = {};
@@ -361,6 +364,7 @@ export default function App() {
         setManagementReviews(mrRows.map(r => managementReviewFromDb(r, p)));
         setDocumentAcknowledgments(ackRows.map(r => acknowledgmentFromDb(r, p)));
         setEquipmentDowntime(dtRows.map(r => downtimeFromDb(r, p)));
+        setClauseEvidence(ceRows.map(r => clauseEvidenceFromDb(r, p)));
       } catch (err) {
         console.error("Failed to load data from Supabase:", err);
       } finally {
@@ -608,6 +612,23 @@ export default function App() {
     }
   };
 
+  const addClauseEvidenceAction = async (clauseId, documentId) => {
+    try {
+      const row = await clauseEvidenceApi.addClauseEvidence(clauseId, documentId, nameToId(personnel, currentUser.name));
+      setClauseEvidence(prev => [...prev, clauseEvidenceFromDb(row, personnel)]);
+    } catch (e) {
+      alert("Could not link this document.\n\n" + e.message);
+    }
+  };
+  const removeClauseEvidenceAction = async (id) => {
+    try {
+      await clauseEvidenceApi.removeClauseEvidence(id);
+      setClauseEvidence(prev => prev.filter(ce => ce.id !== id));
+    } catch (e) {
+      alert("Could not remove this evidence link.\n\n" + e.message);
+    }
+  };
+
   /**
    * Publishes a new version of a controlled document (SOP/QSP/Policy/Manual).
    * Enforced server-side (RLS, 0007_document_control.sql) to Admin/QA Manager/
@@ -699,6 +720,8 @@ export default function App() {
   const canEdit = currentUser.role !== "Viewer";
   const canAuthorizeIQC = isAdmin || isQaManager;
   const canAssignTasks = TASK_ASSIGNER_ROLES.includes(currentUser.role);
+  /** Clause compliance assessment is a QA governance judgment, not routine data entry — same role group as task assignment, so a deputy can still act while the QA Manager/Admin is away. */
+  const canManageClauseStatus = TASK_ASSIGNER_ROLES.includes(currentUser.role);
   const canPublishControlledDocs = DOCUMENT_PUBLISHER_ROLES.includes(currentUser.role);
   const canSeeAuditBackup = isAdmin || isQaManager;
 
@@ -777,7 +800,8 @@ export default function App() {
           competency={competency} equipmentRecords={equipmentRecords} equipment={equipment} />}
         {tab === "clauses" && <ClauseRegister clauseStatus={clauseStatus} updateClauseStatus={updateClauseStatus}
           personnel={personnel} tasks={tasks} updateTasks={updateTasks} canEdit={canEdit} canAssignTasks={canAssignTasks} documents={documents}
-          canSeeAuditBackup={canSeeAuditBackup} />}
+          canSeeAuditBackup={canSeeAuditBackup} clauseEvidence={clauseEvidence} canManageClauseStatus={canManageClauseStatus}
+          addClauseEvidenceAction={addClauseEvidenceAction} removeClauseEvidenceAction={removeClauseEvidenceAction} />}
         {tab === "tasks" && <Tasks tasks={tasks} updateTasks={updateTasks} setTaskStatusAction={setTaskStatusAction} personnel={personnel} canEdit={canEdit} canAssignTasks={canAssignTasks} />}
         {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} />}
         {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} />}
@@ -962,7 +986,7 @@ function Panel({ title, onSeeAll, children }) {
 function Empty({ text }) { return <div className="text-sm text-gray-400 py-4 text-center">{text}</div>; }
 
 // ---------------- Clause Register ----------------
-function ClauseRegister({ clauseStatus, updateClauseStatus, personnel, tasks, updateTasks, canEdit, canAssignTasks, documents, canSeeAuditBackup }) {
+function ClauseRegister({ clauseStatus, updateClauseStatus, personnel, tasks, updateTasks, canAssignTasks, documents, canSeeAuditBackup, clauseEvidence, addClauseEvidenceAction, removeClauseEvidenceAction, canManageClauseStatus }) {
   const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(CLAUSES.map(c => [c.id, true])));
   const [taskDraftFor, setTaskDraftFor] = useState(null);
   const [historyOpenFor, setHistoryOpenFor] = useState(null);
@@ -999,7 +1023,9 @@ function ClauseRegister({ clauseStatus, updateClauseStatus, personnel, tasks, up
   return (
     <div className="p-8 max-w-5xl">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Clause register</h1>
-      <p className="text-sm text-gray-500 mb-6">Track compliance status, ownership, and review dates for every clause of ISO 15189:2022.</p>
+      <p className="text-sm text-gray-500 mb-1">Track compliance status, ownership, and review dates for every clause of ISO 15189:2022.</p>
+      {!canManageClauseStatus && <p className="text-xs text-gray-400 mb-6">Compliance assessment is limited to the Admin, QA Manager, and their deputies — you can view every clause here, but not change its status, owner, or evidence.</p>}
+      {canManageClauseStatus && <div className="mb-6" />}
 
       {CLAUSES.map(group => (
         <div key={group.id} className="mb-4 bg-white rounded-lg border" style={{ borderColor: "#E1EBE8" }}>
@@ -1020,16 +1046,16 @@ function ClauseRegister({ clauseStatus, updateClauseStatus, personnel, tasks, up
                       <div className="flex-1">
                         <div className="text-sm mb-2">{sub.title}</div>
                         <div className="flex flex-wrap gap-2 items-center">
-                          <select value={cs.status} disabled={!canEdit} onChange={e => setStatus(sub.id, { status: e.target.value })}
+                          <select value={cs.status} disabled={!canManageClauseStatus} onChange={e => setStatus(sub.id, { status: e.target.value })}
                             className="text-xs border rounded-md px-2 py-1 disabled:opacity-60" style={{ borderColor: "#D8E5E1", color: STATUS_COLOR[cs.status] }}>
                             {STATUS_OPTS.map(s => <option key={s} value={s}>{s}</option>)}
                           </select>
-                          <select value={cs.owner} disabled={!canEdit} onChange={e => setStatus(sub.id, { owner: e.target.value })}
+                          <select value={cs.owner} disabled={!canManageClauseStatus} onChange={e => setStatus(sub.id, { owner: e.target.value })}
                             className="text-xs border rounded-md px-2 py-1 disabled:opacity-60" style={{ borderColor: "#D8E5E1" }}>
                             <option value="">Assign owner…</option>
                             {personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
                           </select>
-                          <input type="date" value={cs.lastReviewed} disabled={!canEdit} onChange={e => setStatus(sub.id, { lastReviewed: e.target.value })}
+                          <input type="date" value={cs.lastReviewed} disabled={!canManageClauseStatus} onChange={e => setStatus(sub.id, { lastReviewed: e.target.value })}
                             className="text-xs border rounded-md px-2 py-1 disabled:opacity-60" style={{ borderColor: "#D8E5E1" }} title="Last reviewed" />
                           {(!cs.lastReviewed || cs.lastReviewed < oneYearAgoISO) && <Badge color={COLORS.amber}>Review due</Badge>}
                           {canAssignTasks && (
@@ -1056,19 +1082,35 @@ function ClauseRegister({ clauseStatus, updateClauseStatus, personnel, tasks, up
                             ))}
                           </div>
                         )}
-                        <textarea value={cs.notes} disabled={!canEdit} onChange={e => setStatus(sub.id, { notes: e.target.value })}
+                        <textarea value={cs.notes} disabled={!canManageClauseStatus} onChange={e => setStatus(sub.id, { notes: e.target.value })}
                           placeholder="Notes…" rows={cs.notes ? 2 : 1}
                           className="w-full mt-2 text-xs border rounded-md px-2 py-1.5 text-gray-600 disabled:opacity-60" style={{ borderColor: "#EEF3F1" }} />
-                        <div className="flex items-center gap-2 mt-2">
-                          <LinkIcon size={12} color={COLORS.teal} className="shrink-0" />
-                          <select value={cs.evidenceDocumentId || ""} disabled={!canEdit} onChange={e => setStatus(sub.id, { evidenceDocumentId: e.target.value })}
-                            className="text-xs border rounded-md px-2 py-1 flex-1 disabled:opacity-60" style={{ borderColor: "#D8E5E1" }}>
-                            <option value="">No evidence document linked</option>
-                            {documents.map(d => <option key={d.id} value={d.id}>{d.title} ({d.category})</option>)}
-                          </select>
-                          {cs.evidenceDocumentId && (() => {
-                            const doc = documents.find(d => d.id === cs.evidenceDocumentId);
-                            return doc ? <a href={doc.url} target="_blank" rel="noreferrer" className="text-xs underline" style={{ color: COLORS.teal }}>Open</a> : null;
+                        <div className="mt-2">
+                          <div className="text-[11px] font-medium text-gray-500 mb-1">Evidence documents</div>
+                          {clauseEvidence.filter(ce => ce.clauseId === sub.id).length === 0 && (
+                            <div className="text-xs text-gray-400 mb-1">No evidence documents linked yet.</div>
+                          )}
+                          {clauseEvidence.filter(ce => ce.clauseId === sub.id).map(ce => {
+                            const doc = documents.find(d => d.id === ce.documentId);
+                            if (!doc) return null;
+                            return (
+                              <div key={ce.id} className="flex items-center gap-2 text-xs py-0.5">
+                                <LinkIcon size={11} color={COLORS.teal} className="shrink-0" />
+                                <a href={doc.url} target="_blank" rel="noreferrer" className="underline flex-1 truncate" style={{ color: COLORS.teal }}>{doc.title} ({doc.category})</a>
+                                {canManageClauseStatus && <button onClick={() => removeClauseEvidenceAction(ce.id)} className="text-gray-300 hover:text-red-500"><X size={12} /></button>}
+                              </div>
+                            );
+                          })}
+                          {canManageClauseStatus && (() => {
+                            const linkedIds = new Set(clauseEvidence.filter(ce => ce.clauseId === sub.id).map(ce => ce.documentId));
+                            const available = documents.filter(d => !linkedIds.has(d.id));
+                            return (
+                              <select value="" disabled={available.length === 0} onChange={e => e.target.value && addClauseEvidenceAction(sub.id, e.target.value)}
+                                className="text-xs border rounded-md px-2 py-1 mt-1 disabled:opacity-50" style={{ borderColor: "#D8E5E1" }}>
+                                <option value="">{available.length === 0 ? "All documents already linked" : "+ Link another document…"}</option>
+                                {available.map(d => <option key={d.id} value={d.id}>{d.title} ({d.category})</option>)}
+                              </select>
+                            );
                           })()}
                         </div>
                         {taskDraftFor === sub.id && canAssignTasks && (

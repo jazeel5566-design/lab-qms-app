@@ -82,6 +82,15 @@ export const rowToClauseStatus = (row) => ({
   evidenceDocumentId: row.evidence_document_id || "",
 });
 
+// ---------------- clause_evidence (many-to-many clause <-> document) ----------------
+export const clauseEvidenceFromDb = (row, personnel) => ({
+  id: row.id,
+  clauseId: row.clause_id,
+  documentId: row.document_id,
+  addedBy: idToName(personnel, row.added_by),
+  addedAt: row.added_at,
+});
+
 // ---------------- equipment_downtime ----------------
 export const downtimeFromDb = (row, personnel) => ({
   id: row.id,
