@@ -31,6 +31,17 @@ export async function setTaskStatus(id, status) {
 }
 
 /**
+ * Restricted to Admin/QA Manager/deputy server-side, via the
+ * approve_task_completion() RPC (0014 migration) — deliberately NOT open to
+ * any non-Viewer the way setTaskStatus is, since this is the actual sign-off.
+ */
+export async function approveTaskCompletion(id) {
+  const { data, error } = await supabase.rpc("approve_task_completion", { p_task_id: id });
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+/**
  * Callable by any non-Viewer, not just task assigners — enforced server-side
  * via the create_next_recurrence RPC (0011 migration), which only ever
  * clones an existing recurring task's own fields. Returns the newly created

@@ -115,6 +115,9 @@ export const taskFromDb = (row, personnel) => ({
   isRecurring: row.is_recurring || false,
   recurrenceIntervalDays: row.recurrence_interval_days || null,
   recurrenceParentId: row.recurrence_parent_id || null,
+  completionApproved: row.completion_approved || false,
+  approvedBy: idToName(personnel, row.approved_by),
+  approvedAt: row.approved_at || "",
 });
 export const taskToDb = (t, personnel) => ({
   title: t.title,

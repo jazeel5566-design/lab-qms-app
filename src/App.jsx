@@ -427,33 +427,35 @@ export default function App() {
   /** Status-only change, callable by any non-Viewer even if they can't otherwise edit tasks (goes through the set_task_status RPC). */
   const setTaskStatusAction = async (id, status) => {
     const prev = tasks;
-    setTasks(tasks.map(t => (t.id === id ? { ...t, status } : t)));
+    setTasks(tasks.map(t => (t.id === id
+      ? { ...t, status, ...(status !== "Done" ? { completionApproved: false, approvedBy: "", approvedAt: "" } : {}) }
+      : t)));
     try {
       await taskApi.setTaskStatus(id, status);
     } catch (e) {
       alert("Could not update task status.\n\n" + e.message);
       setTasks(prev);
-      return;
     }
+  };
 
-    // Separate try/catch: a problem here should never be reported as "the
-    // status update failed" — that part already succeeded above. This also
-    // deliberately checks the function exists before calling it, so if this
-    // ever breaks again the message names the exact missing piece instead
-    // of a generic browser error.
-    if (status === "Done") {
-      const completedTask = tasks.find(t => t.id === id);
-      if (completedTask?.isRecurring) {
-        try {
-          if (typeof taskApi.createNextRecurrence !== "function") {
-            throw new Error("taskApi.createNextRecurrence is not defined in the currently loaded code — this build is missing that function.");
-          }
-          const newRow = await taskApi.createNextRecurrence(id);
-          if (newRow) setTasks(current => [taskFromDb(newRow, personnel), ...current]);
-        } catch (e) {
-          alert("The task was marked Done successfully, but creating the next recurring occurrence failed.\n\n" + (e?.message || String(e)));
-        }
+  /**
+   * Marking a task "Done" no longer finishes it outright — this is the
+   * actual sign-off step, restricted server-side to Admin/QA Manager/deputy
+   * (0014 migration). Only once approved does a recurring task's next
+   * occurrence get created, so a rejected completion never leaves an
+   * already-spawned follow-up task behind.
+   */
+  const approveTaskCompletionAction = async (id) => {
+    try {
+      const row = await taskApi.approveTaskCompletion(id);
+      const approvedTask = taskFromDb(row, personnel);
+      setTasks(current => current.map(t => t.id === id ? approvedTask : t));
+      if (approvedTask.isRecurring) {
+        const newRow = await taskApi.createNextRecurrence(id);
+        if (newRow) setTasks(current => [taskFromDb(newRow, personnel), ...current]);
       }
+    } catch (e) {
+      alert("Could not approve this task.\n\n" + e.message);
     }
   };
 
@@ -690,12 +692,13 @@ export default function App() {
       const cs = clauseStatus[s.id];
       return !cs || !cs.lastReviewed || cs.lastReviewed < oneYearAgoISO;
     }).length;
+    const tasksAwaitingApproval = tasks.filter(t => t.status === "Done" && !t.completionApproved).length;
 
     return {
       counts, openTasks, overdueTasks, openNcs, criticalNcs, totalClauses: ALL_SUBCLAUSES.length,
       competencyOverdue, competencyDueSoon, equipmentOverdue, equipmentDueSoon,
       iqcUnauthorizedViolations, eqaUnsatisfactory, controlLotsExpired, controlLotsExpiringSoon, documentsOverdueForReview,
-      clausesOverdueForReview,
+      clausesOverdueForReview, tasksAwaitingApproval,
     };
   }, [clauseStatus, tasks, ncs, competency, equipmentRecords, qcParameters, qcControls, qcRuns, eqaEvents, documents]);
 
@@ -797,12 +800,12 @@ export default function App() {
       {/* Main */}
       <div className="flex-1 overflow-auto">
         {tab === "dashboard" && <Dashboard stats={stats} tasks={tasks} ncs={ncs} personnel={personnel} setTab={setTab}
-          competency={competency} equipmentRecords={equipmentRecords} equipment={equipment} />}
+          competency={competency} equipmentRecords={equipmentRecords} equipment={equipment} canAssignTasks={canAssignTasks} />}
         {tab === "clauses" && <ClauseRegister clauseStatus={clauseStatus} updateClauseStatus={updateClauseStatus}
           personnel={personnel} tasks={tasks} updateTasks={updateTasks} canEdit={canEdit} canAssignTasks={canAssignTasks} documents={documents}
           canSeeAuditBackup={canSeeAuditBackup} clauseEvidence={clauseEvidence} canManageClauseStatus={canManageClauseStatus}
           addClauseEvidenceAction={addClauseEvidenceAction} removeClauseEvidenceAction={removeClauseEvidenceAction} />}
-        {tab === "tasks" && <Tasks tasks={tasks} updateTasks={updateTasks} setTaskStatusAction={setTaskStatusAction} personnel={personnel} canEdit={canEdit} canAssignTasks={canAssignTasks} />}
+        {tab === "tasks" && <Tasks tasks={tasks} updateTasks={updateTasks} setTaskStatusAction={setTaskStatusAction} approveTaskCompletionAction={approveTaskCompletionAction} personnel={personnel} canEdit={canEdit} canAssignTasks={canAssignTasks} />}
         {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} />}
         {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} />}
         {tab === "iqc" && <IQCPage qcMachines={qcMachines} updateQcMachines={updateQcMachines}
@@ -831,7 +834,7 @@ export default function App() {
 }
 
 // ---------------- Dashboard ----------------
-function Dashboard({ stats, tasks, ncs, personnel, setTab, competency, equipmentRecords, equipment }) {
+function Dashboard({ stats, tasks, ncs, personnel, setTab, competency, equipmentRecords, equipment, canAssignTasks }) {
   const pct = Math.round((stats.counts["Compliant"] / stats.totalClauses) * 100);
   const upcoming = tasks.filter(t => t.status !== "Done").sort((a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999")).slice(0, 5);
   const openNcs = ncs.filter(n => n.status !== "Closed").slice(0, 5);
@@ -865,6 +868,9 @@ function Dashboard({ stats, tasks, ncs, personnel, setTab, competency, equipment
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         <StatCard label="Clauses overdue for review" value={stats.clausesOverdueForReview} sub="not reviewed in the last 12 months" color={stats.clausesOverdueForReview ? COLORS.amber : COLORS.teal} />
+        {canAssignTasks && (
+          <StatCard label="Tasks awaiting approval" value={stats.tasksAwaitingApproval} sub="marked Done by the assignee, not yet approved" color={stats.tasksAwaitingApproval ? COLORS.amber : COLORS.teal} />
+        )}
       </div>
 
       <div className="grid grid-cols-2 gap-4 mb-8">
@@ -1159,7 +1165,7 @@ function MiniTaskForm({ personnel, onSave, onCancel }) {
 }
 
 // ---------------- Tasks ----------------
-function Tasks({ tasks, updateTasks, setTaskStatusAction, personnel, canEdit, canAssignTasks }) {
+function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks }) {
   const [showForm, setShowForm] = useState(false);
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterAssignee, setFilterAssignee] = useState("All");
@@ -1203,16 +1209,27 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, personnel, canEdit, ca
         {filtered.length === 0 && <Empty text="No tasks match this view." />}
         {filtered.map(t => {
           const overdue = t.status !== "Done" && t.dueDate && t.dueDate < todayISO();
+          const trulyDone = t.status === "Done" && t.completionApproved;
+          const awaitingApproval = t.status === "Done" && !t.completionApproved;
           return (
             <div key={t.id} className="flex items-center gap-3 px-5 py-3">
               <button disabled={!canEdit} onClick={() => setTaskStatusAction(t.id, t.status === "Done" ? "Open" : "Done")} className="disabled:opacity-50">
-                {t.status === "Done" ? <CheckCircle2 size={18} color={COLORS.teal} /> : <Circle size={18} color="#C7D6D2" />}
+                {trulyDone ? <CheckCircle2 size={18} color={COLORS.teal} /> : awaitingApproval ? <Clock size={18} color={COLORS.amber} /> : <Circle size={18} color="#C7D6D2" />}
               </button>
               <div className="flex-1">
-                <div className="text-sm" style={{ textDecoration: t.status === "Done" ? "line-through" : "none", color: t.status === "Done" ? "#9AA5A3" : COLORS.ink }}>{t.title}</div>
-                <div className="text-xs text-gray-400">{t.assignedTo || "Unassigned"} {t.clauseId && `· Clause ${t.clauseId}`}</div>
+                <div className="text-sm" style={{ textDecoration: trulyDone ? "line-through" : "none", color: trulyDone ? "#9AA5A3" : COLORS.ink }}>{t.title}</div>
+                <div className="text-xs text-gray-400">
+                  {t.assignedTo || "Unassigned"} {t.clauseId && `· Clause ${t.clauseId}`}
+                  {trulyDone && t.approvedBy && ` · approved by ${t.approvedBy}`}
+                </div>
               </div>
               {t.isRecurring && <Badge color={COLORS.teal}>Recurring · every {t.recurrenceIntervalDays}d</Badge>}
+              {awaitingApproval && <Badge color={COLORS.amber}>Awaiting approval</Badge>}
+              {awaitingApproval && canAssignTasks && (
+                <button onClick={() => approveTaskCompletionAction(t.id)} className="text-xs px-2 py-1 rounded-md text-white whitespace-nowrap" style={{ background: COLORS.teal }}>
+                  Approve
+                </button>
+              )}
               <select value={t.status} disabled={!canEdit} onChange={e => setTaskStatusAction(t.id, e.target.value)} className="text-xs border rounded-md px-2 py-1 disabled:opacity-50" style={{ borderColor: "#D8E5E1" }}>
                 {TASK_STATUS.map(s => <option key={s}>{s}</option>)}
               </select>
