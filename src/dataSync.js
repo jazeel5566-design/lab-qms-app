@@ -140,6 +140,17 @@ export const taskCommentFromDb = (row, personnel) => ({
   createdAt: row.created_at,
 });
 
+// ---------------- task_templates ----------------
+export const taskTemplateFromDb = (row, personnel) => ({
+  id: row.id,
+  title: row.title,
+  defaultPriority: row.default_priority,
+  defaultClauseId: row.default_clause_id || "",
+  isRecurring: row.is_recurring || false,
+  recurrenceIntervalDays: row.recurrence_interval_days || null,
+  createdBy: idToName(personnel, row.created_by),
+});
+
 // ---------------- nonconformities ----------------
 export const ncFromDb = (row, personnel) => ({
   id: row.id,

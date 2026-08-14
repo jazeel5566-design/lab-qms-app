@@ -27,6 +27,7 @@ import * as ackApi from "./api/documentAcknowledgments.js";
 import * as downtimeApi from "./api/equipmentDowntime.js";
 import * as clauseEvidenceApi from "./api/clauseEvidence.js";
 import * as taskCommentsApi from "./api/taskComments.js";
+import * as taskTemplatesApi from "./api/taskTemplates.js";
 import * as auditApi from "./api/auditAndBackup.js";
 import {
   syncList, syncClauseStatus, nameToId, idToName, rowToClauseStatus,
@@ -38,7 +39,7 @@ import {
   controlFromDb, controlToDb, runFromDb, runToDb,
   eqaFromDb, eqaToDb, documentFromDb, documentToDb,
   riskFromDb, riskToDb, managementReviewFromDb, managementReviewToDb,
-  acknowledgmentFromDb, downtimeFromDb, clauseEvidenceFromDb, taskCommentFromDb,
+  acknowledgmentFromDb, downtimeFromDb, clauseEvidenceFromDb, taskCommentFromDb, taskTemplateFromDb,
 } from "./dataSync.js";
 
 // ---------- ISO 15189:2022 clause tree ----------
@@ -293,6 +294,7 @@ export default function App() {
   const [equipmentDowntime, setEquipmentDowntime] = useState([]);
   const [clauseEvidence, setClauseEvidence] = useState([]);
   const [taskComments, setTaskComments] = useState([]);
+  const [taskTemplates, setTaskTemplates] = useState([]);
 
   // Runs exactly once, on first load: is there already a signed-in session
   // (e.g. a returning visitor)? Deliberately does NOT fetch any app data here —
@@ -326,7 +328,7 @@ export default function App() {
         const p = pRows.map(personnelFromDb);
         setPersonnel(p);
 
-        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows] = await Promise.all([
+        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows, ttRows] = await Promise.all([
           clauseApi.listClauseStatus(),
           taskApi.listTasks(),
           ncApi.listNonconformities(),
@@ -345,6 +347,7 @@ export default function App() {
           downtimeApi.listEquipmentDowntime(),
           clauseEvidenceApi.listClauseEvidence(),
           taskCommentsApi.listTaskComments(),
+          taskTemplatesApi.listTaskTemplates(),
         ]);
 
         const cs = {};
@@ -369,6 +372,7 @@ export default function App() {
         setEquipmentDowntime(dtRows.map(r => downtimeFromDb(r, p)));
         setClauseEvidence(ceRows.map(r => clauseEvidenceFromDb(r, p)));
         setTaskComments(tcRows.map(r => taskCommentFromDb(r, p)));
+        setTaskTemplates(ttRows.map(r => taskTemplateFromDb(r, p)));
       } catch (err) {
         console.error("Failed to load data from Supabase:", err);
       } finally {
@@ -652,6 +656,30 @@ export default function App() {
     }
   };
 
+  const createTaskTemplateAction = async (template) => {
+    try {
+      const row = await taskTemplatesApi.createTaskTemplate({
+        title: template.title,
+        default_priority: template.defaultPriority,
+        default_clause_id: template.defaultClauseId || null,
+        is_recurring: template.isRecurring || false,
+        recurrence_interval_days: template.recurrenceIntervalDays || null,
+        created_by: nameToId(personnel, currentUser.name),
+      });
+      setTaskTemplates(prev => [...prev, taskTemplateFromDb(row, personnel)]);
+    } catch (e) {
+      alert("Could not save this template.\n\n" + e.message);
+    }
+  };
+  const deleteTaskTemplateAction = async (id) => {
+    try {
+      await taskTemplatesApi.deleteTaskTemplate(id);
+      setTaskTemplates(prev => prev.filter(t => t.id !== id));
+    } catch (e) {
+      alert("Could not delete this template.\n\n" + e.message);
+    }
+  };
+
   /** Restricted server-side to the person the record is actually about (0015 migration). */
   const confirmCompetencyAssessmentAction = async (recordId) => {
     try {
@@ -838,7 +866,8 @@ export default function App() {
           addClauseEvidenceAction={addClauseEvidenceAction} removeClauseEvidenceAction={removeClauseEvidenceAction} />}
         {tab === "tasks" && <Tasks tasks={tasks} updateTasks={updateTasks} setTaskStatusAction={setTaskStatusAction} approveTaskCompletionAction={approveTaskCompletionAction}
           personnel={personnel} canEdit={canEdit} canAssignTasks={canAssignTasks} taskComments={taskComments} currentUser={currentUser}
-          addTaskCommentAction={addTaskCommentAction} deleteTaskCommentAction={deleteTaskCommentAction} />}
+          addTaskCommentAction={addTaskCommentAction} deleteTaskCommentAction={deleteTaskCommentAction}
+          taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction} />}
         {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} />}
         {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} />}
         {tab === "iqc" && <IQCPage qcMachines={qcMachines} updateQcMachines={updateQcMachines}
@@ -877,9 +906,61 @@ function Dashboard({ stats, tasks, ncs, personnel, setTab, competency, equipment
   const equipmentAlerts = equipmentRecords.filter(r => r.dueDate && r.dueDate < todayISO())
     .sort((a, b) => a.dueDate.localeCompare(b.dueDate)).slice(0, 5);
 
+  const printDashboardSnapshot = () => {
+    const w = window.open("", "_blank");
+    if (!w) { alert("Please allow pop-ups for this site to print the report."); return; }
+    const row = (label, value) => `<tr><td>${escapeHtml(label)}</td><td style="font-weight:600">${escapeHtml(value)}</td></tr>`;
+    w.document.write(`<!DOCTYPE html><html><head><title>Quality Management Snapshot</title>
+      <style>
+        body { font-family: -apple-system, system-ui, sans-serif; padding: 32px; color: #0F2A3D; }
+        h1 { font-size: 18px; margin-bottom: 2px; }
+        h2 { font-size: 13px; margin: 20px 0 6px; }
+        p.meta { color: #6B7A78; font-size: 12px; margin-top: 0; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
+        td { border: 1px solid #D8E5E1; padding: 6px 10px; font-size: 12px; }
+        tr:nth-child(even) td { background: #F6FAF9; }
+      </style></head>
+      <body>
+        <h1>Quality Management Snapshot</h1>
+        <p class="meta">Lab QMS \u2014 generated ${escapeHtml(new Date().toLocaleString())} \u2014 suitable for attaching to a Management Review record</p>
+        <h2>Compliance</h2>
+        <table>
+          ${row("Clause compliance", `${pct}% (${stats.counts["Compliant"]} of ${stats.totalClauses})`)}
+          ${row("Non-conformant clauses", stats.counts["Non-conformant"])}
+          ${row("Clauses overdue for review", stats.clausesOverdueForReview)}
+        </table>
+        <h2>Tasks & NCs</h2>
+        <table>
+          ${row("Open tasks", `${stats.openTasks} (${stats.overdueTasks} overdue)`)}
+          ${row("Tasks awaiting approval", stats.tasksAwaitingApproval)}
+          ${row("Open NCs", `${stats.openNcs} (${stats.criticalNcs} critical)`)}
+        </table>
+        <h2>Personnel & equipment</h2>
+        <table>
+          ${row("Competency overdue", stats.competencyOverdue)}
+          ${row("Equipment maintenance overdue", stats.equipmentOverdue)}
+          ${row("Documents overdue for review", stats.documentsOverdueForReview)}
+        </table>
+        <h2>IQC & EQA</h2>
+        <table>
+          ${row("Unauthorized IQC violations", stats.iqcUnauthorizedViolations)}
+          ${row("Control lots expired", stats.controlLotsExpired)}
+          ${row("EQA unsatisfactory results", stats.eqaUnsatisfactory)}
+        </table>
+      </body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
+
   return (
     <div className="p-8 max-w-6xl">
-      <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Quality management overview</h1>
+      <div className="flex items-center justify-between mb-1">
+        <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Quality management overview</h1>
+        <button onClick={printDashboardSnapshot} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+          <Download size={14} /> Export snapshot (PDF)
+        </button>
+      </div>
       <p className="text-sm text-gray-500 mb-6">Snapshot of ISO 15189:2022 compliance, open tasks, and nonconformities.</p>
 
       <div className="grid grid-cols-4 gap-4 mb-8">
@@ -1198,7 +1279,7 @@ function MiniTaskForm({ personnel, onSave, onCancel }) {
 }
 
 // ---------------- Tasks ----------------
-function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks, taskComments, currentUser, addTaskCommentAction, deleteTaskCommentAction }) {
+function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks, taskComments, currentUser, addTaskCommentAction, deleteTaskCommentAction, taskTemplates, createTaskTemplateAction, deleteTaskTemplateAction }) {
   const [showForm, setShowForm] = useState(false);
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterAssignee, setFilterAssignee] = useState("All");
@@ -1238,7 +1319,7 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
         </select>
       </div>
 
-      {showForm && canAssignTasks && <TaskForm personnel={personnel} onCancel={() => setShowForm(false)} onSave={addTask} />}
+      {showForm && canAssignTasks && <TaskForm personnel={personnel} onCancel={() => setShowForm(false)} onSave={addTask} taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction} />}
 
       <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
         {filtered.length === 0 && <Empty text="No tasks match this view." />}
@@ -1311,7 +1392,7 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
   );
 }
 
-function TaskForm({ personnel, onSave, onCancel }) {
+function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTemplateAction, deleteTaskTemplateAction }) {
   const [title, setTitle] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -1319,8 +1400,41 @@ function TaskForm({ personnel, onSave, onCancel }) {
   const [clauseId, setClauseId] = useState("");
   const [isRecurring, setIsRecurring] = useState(false);
   const [recurrenceIntervalDays, setRecurrenceIntervalDays] = useState(30);
+  const [saveAsTemplate, setSaveAsTemplate] = useState(false);
+  const [showManageTemplates, setShowManageTemplates] = useState(false);
+
+  const applyTemplate = (templateId) => {
+    const t = taskTemplates.find(tt => tt.id === templateId);
+    if (!t) return;
+    setTitle(t.title);
+    setPriority(t.defaultPriority);
+    setClauseId(t.defaultClauseId || "");
+    setIsRecurring(t.isRecurring);
+    if (t.isRecurring && t.recurrenceIntervalDays) setRecurrenceIntervalDays(t.recurrenceIntervalDays);
+  };
+
   return (
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+      {taskTemplates.length > 0 && (
+        <div className="flex items-center gap-2 mb-3">
+          <select className={inputCls} style={{ ...inputStyle, maxWidth: 300 }} value="" onChange={e => e.target.value && applyTemplate(e.target.value)}>
+            <option value="">Start from a saved template…</option>
+            {taskTemplates.map(t => <option key={t.id} value={t.id}>{t.title}{t.isRecurring ? ` (every ${t.recurrenceIntervalDays}d)` : ""}</option>)}
+          </select>
+          <button onClick={() => setShowManageTemplates(v => !v)} className="text-xs text-gray-400 underline">Manage templates</button>
+        </div>
+      )}
+      {showManageTemplates && (
+        <div className="border rounded-md p-2 mb-3 space-y-1" style={{ borderColor: "#EEF3F1" }}>
+          {taskTemplates.length === 0 && <div className="text-xs text-gray-400">No saved templates yet.</div>}
+          {taskTemplates.map(t => (
+            <div key={t.id} className="flex items-center justify-between text-xs">
+              <span>{t.title}</span>
+              <button onClick={() => deleteTaskTemplateAction(t.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>
+            </div>
+          ))}
+        </div>
+      )}
       <Field label="Task"><input className={inputCls} style={inputStyle} value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Update SOP for sample rejection criteria" /></Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="Assign to">
@@ -1349,12 +1463,22 @@ function TaskForm({ personnel, onSave, onCancel }) {
           <input type="number" min="1" className={inputCls} style={{ ...inputStyle, maxWidth: 120 }} value={recurrenceIntervalDays} onChange={e => setRecurrenceIntervalDays(e.target.value)} />
         </Field>
       )}
+      <div className="flex items-center gap-2 mb-2">
+        <input type="checkbox" id="save-template" checked={saveAsTemplate} onChange={e => setSaveAsTemplate(e.target.checked)} />
+        <label htmlFor="save-template" className="text-xs text-gray-600">Save this title/priority/clause/recurrence as a reusable template for next time</label>
+      </div>
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button onClick={() => title.trim() && onSave({
-          title, assignedTo, dueDate, priority, clauseId,
-          isRecurring, recurrenceIntervalDays: isRecurring ? Number(recurrenceIntervalDays) || 30 : null,
-        })}
+        <button onClick={() => {
+          if (!title.trim()) return;
+          if (saveAsTemplate) {
+            createTaskTemplateAction({ title, defaultPriority: priority, defaultClauseId: clauseId, isRecurring, recurrenceIntervalDays: isRecurring ? Number(recurrenceIntervalDays) || 30 : null });
+          }
+          onSave({
+            title, assignedTo, dueDate, priority, clauseId,
+            isRecurring, recurrenceIntervalDays: isRecurring ? Number(recurrenceIntervalDays) || 30 : null,
+          });
+        }}
           className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Save task</button>
       </div>
     </div>
@@ -3438,6 +3562,8 @@ function RunForm({ controls, personnel, onSave, onCancel }) {
 function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction }) {
   const [showForm, setShowForm] = useState(false);
   const [filterDiscipline, setFilterDiscipline] = useState("All");
+  const [showTrends, setShowTrends] = useState(false);
+  const [trendParameter, setTrendParameter] = useState("");
 
   const addEvent = (draft) => {
     const sdi = draft.peerMean !== "" && draft.peerSD && draft.peerSD !== "0"
@@ -3454,17 +3580,65 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
 
   const evalColor = (ev) => ev === "Satisfactory" ? COLORS.teal : ev === "Marginal" ? COLORS.amber : ev === "Unsatisfactory" ? COLORS.red : "#9AA5A3";
 
+  const trendParameters = useMemo(() => [...new Set(eqaEvents.map(e => e.parameter).filter(Boolean))].sort(), [eqaEvents]);
+  const trendData = useMemo(() => {
+    if (!trendParameter) return [];
+    return eqaEvents
+      .filter(e => e.parameter === trendParameter && e.sdi !== null && e.sdi !== undefined)
+      .sort((a, b) => (a.dateReceived || "").localeCompare(b.dateReceived || ""))
+      .map(e => ({ date: e.dateReceived, sdi: Number(e.sdi) }));
+  }, [eqaEvents, trendParameter]);
+
   return (
     <div className="p-8 max-w-6xl">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>External Quality Assessment (EQAS)</h1>
-        {canEdit && (
-          <button onClick={() => setShowForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
-            <Plus size={14} /> Log EQA result
+        <div className="flex gap-2">
+          <button onClick={() => setShowTrends(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+            <Activity size={14} /> {showTrends ? "Hide" : "Show"} trends
           </button>
-        )}
+          {canEdit && (
+            <button onClick={() => setShowForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
+              <Plus size={14} /> Log EQA result
+            </button>
+          )}
+        </div>
       </div>
       <p className="text-sm text-gray-500 mb-4">Proficiency testing / interlaboratory comparison across Hematology, Biochemistry, and Immunochemistry, with automatic SDI evaluation.</p>
+
+      {showTrends && (
+        <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-sm font-semibold" style={{ color: COLORS.navy }}>SDI over time by analyte</div>
+            <select className={inputCls} style={{ ...inputStyle, maxWidth: 240 }} value={trendParameter} onChange={e => setTrendParameter(e.target.value)}>
+              <option value="">Select an analyte…</option>
+              {trendParameters.map(p => <option key={p} value={p}>{p}</option>)}
+            </select>
+          </div>
+          {!trendParameter ? (
+            <Empty text="Pick an analyte above to see its SDI trend across all EQA cycles received so far." />
+          ) : trendData.length === 0 ? (
+            <Empty text="No SDI results yet for this analyte." />
+          ) : (
+            <div style={{ width: "100%", height: 220 }}>
+              <ResponsiveContainer>
+                <LineChart data={trendData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#EEF3F1" />
+                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                  <YAxis domain={[-4, 4]} tick={{ fontSize: 11 }} />
+                  <Tooltip />
+                  <ReferenceLine y={0} stroke="#9AA5A3" />
+                  <ReferenceLine y={2} stroke={COLORS.amber} strokeDasharray="3 3" />
+                  <ReferenceLine y={-2} stroke={COLORS.amber} strokeDasharray="3 3" />
+                  <ReferenceLine y={3} stroke={COLORS.red} strokeDasharray="3 3" />
+                  <ReferenceLine y={-3} stroke={COLORS.red} strokeDasharray="3 3" />
+                  <Line type="monotone" dataKey="sdi" stroke={COLORS.teal} strokeWidth={2} dot={{ r: 3 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-2 mb-4">
         <select value={filterDiscipline} onChange={e => setFilterDiscipline(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
@@ -3685,6 +3859,7 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
   const [publishError, setPublishError] = useState("");
   const [showReportPicker, setShowReportPicker] = useState(false);
   const [selectedReportDocIds, setSelectedReportDocIds] = useState([]);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const controlledDocs = documents.filter(d => CONTROLLED_DOCUMENT_CATEGORIES.includes(d.category));
   const personalDocs = documents.filter(d => PERSONAL_DOCUMENT_CATEGORIES.includes(d.category));
@@ -3800,6 +3975,38 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Documents</h1>
       <p className="text-xs text-gray-400 mb-4">Upload a file directly, or paste a link to wherever it's already stored (Drive, SharePoint, etc.) — either works for any document below.</p>
 
+      <div className="mb-4">
+        <input className={inputCls} style={{ ...inputStyle, maxWidth: 360 }} value={searchQuery} onChange={e => setSearchQuery(e.target.value)}
+          placeholder="Search all documents by title, notes, or code…" />
+      </div>
+
+      {searchQuery.trim() ? (() => {
+        const q = searchQuery.trim().toLowerCase();
+        const results = documents.filter(d =>
+          (d.title || "").toLowerCase().includes(q) ||
+          (d.notes || "").toLowerCase().includes(q) ||
+          (d.documentCode || "").toLowerCase().includes(q) ||
+          (d.category || "").toLowerCase().includes(q) ||
+          (d.relatedTo || "").toLowerCase().includes(q)
+        );
+        const sectionLabelFor = (d) => CONTROLLED_DOCUMENT_CATEGORIES.includes(d.category) ? "Controlled" : PERSONAL_DOCUMENT_CATEGORIES.includes(d.category) ? "Personal" : "General";
+        return (
+          <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
+            <div className="px-4 py-2 text-xs text-gray-400">{results.length} result{results.length !== 1 ? "s" : ""} for "{searchQuery.trim()}"</div>
+            {results.length === 0 && <div className="px-4 py-6 text-sm text-gray-400 text-center">No documents match that search.</div>}
+            {results.map(d => (
+              <div key={d.id} className="px-4 py-3 flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium" style={{ color: COLORS.navy }}>{d.title}</div>
+                  <div className="text-xs text-gray-400">{sectionLabelFor(d)} · {d.category}{d.documentCode ? ` · ${d.documentCode}` : ""}{d.notes ? ` · ${d.notes}` : ""}</div>
+                </div>
+                <DocumentLink title="Open" url={d.url} storagePath={d.storagePath} />
+              </div>
+            ))}
+          </div>
+        );
+      })() : (
+      <>
       <div className="flex gap-2 mb-4">
         {SECTION_TABS.map(s => (
           <button key={s.id} onClick={() => setSection(s.id)}
@@ -3989,6 +4196,8 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
             ))}
           </div>
         </>
+      )}
+      </>
       )}
     </div>
   );
