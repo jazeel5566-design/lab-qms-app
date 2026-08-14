@@ -26,6 +26,7 @@ import * as storageApi from "./api/storage.js";
 import * as ackApi from "./api/documentAcknowledgments.js";
 import * as downtimeApi from "./api/equipmentDowntime.js";
 import * as clauseEvidenceApi from "./api/clauseEvidence.js";
+import * as taskCommentsApi from "./api/taskComments.js";
 import * as auditApi from "./api/auditAndBackup.js";
 import {
   syncList, syncClauseStatus, nameToId, idToName, rowToClauseStatus,
@@ -37,7 +38,7 @@ import {
   controlFromDb, controlToDb, runFromDb, runToDb,
   eqaFromDb, eqaToDb, documentFromDb, documentToDb,
   riskFromDb, riskToDb, managementReviewFromDb, managementReviewToDb,
-  acknowledgmentFromDb, downtimeFromDb, clauseEvidenceFromDb,
+  acknowledgmentFromDb, downtimeFromDb, clauseEvidenceFromDb, taskCommentFromDb,
 } from "./dataSync.js";
 
 // ---------- ISO 15189:2022 clause tree ----------
@@ -291,6 +292,7 @@ export default function App() {
   const [documentAcknowledgments, setDocumentAcknowledgments] = useState([]);
   const [equipmentDowntime, setEquipmentDowntime] = useState([]);
   const [clauseEvidence, setClauseEvidence] = useState([]);
+  const [taskComments, setTaskComments] = useState([]);
 
   // Runs exactly once, on first load: is there already a signed-in session
   // (e.g. a returning visitor)? Deliberately does NOT fetch any app data here —
@@ -324,7 +326,7 @@ export default function App() {
         const p = pRows.map(personnelFromDb);
         setPersonnel(p);
 
-        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows] = await Promise.all([
+        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows] = await Promise.all([
           clauseApi.listClauseStatus(),
           taskApi.listTasks(),
           ncApi.listNonconformities(),
@@ -342,6 +344,7 @@ export default function App() {
           ackApi.listAllAcknowledgments(),
           downtimeApi.listEquipmentDowntime(),
           clauseEvidenceApi.listClauseEvidence(),
+          taskCommentsApi.listTaskComments(),
         ]);
 
         const cs = {};
@@ -365,6 +368,7 @@ export default function App() {
         setDocumentAcknowledgments(ackRows.map(r => acknowledgmentFromDb(r, p)));
         setEquipmentDowntime(dtRows.map(r => downtimeFromDb(r, p)));
         setClauseEvidence(ceRows.map(r => clauseEvidenceFromDb(r, p)));
+        setTaskComments(tcRows.map(r => taskCommentFromDb(r, p)));
       } catch (err) {
         console.error("Failed to load data from Supabase:", err);
       } finally {
@@ -631,6 +635,33 @@ export default function App() {
     }
   };
 
+  const addTaskCommentAction = async (taskId, comment) => {
+    try {
+      const row = await taskCommentsApi.addTaskComment(taskId, nameToId(personnel, currentUser.name), comment);
+      setTaskComments(prev => [...prev, taskCommentFromDb(row, personnel)]);
+    } catch (e) {
+      alert("Could not add comment.\n\n" + e.message);
+    }
+  };
+  const deleteTaskCommentAction = async (id) => {
+    try {
+      await taskCommentsApi.deleteTaskComment(id);
+      setTaskComments(prev => prev.filter(c => c.id !== id));
+    } catch (e) {
+      alert("Could not delete this comment.\n\n" + e.message);
+    }
+  };
+
+  /** Restricted server-side to the person the record is actually about (0015 migration). */
+  const confirmCompetencyAssessmentAction = async (recordId) => {
+    try {
+      const row = await opsApi.confirmCompetencyAssessment(recordId);
+      setCompetency(prev => prev.map(c => c.id === recordId ? competencyFromDb(row, personnel) : c));
+    } catch (e) {
+      alert("Could not confirm this assessment.\n\n" + e.message);
+    }
+  };
+
   /**
    * Publishes a new version of a controlled document (SOP/QSP/Policy/Manual).
    * Enforced server-side (RLS, 0007_document_control.sql) to Admin/QA Manager/
@@ -805,7 +836,9 @@ export default function App() {
           personnel={personnel} tasks={tasks} updateTasks={updateTasks} canEdit={canEdit} canAssignTasks={canAssignTasks} documents={documents}
           canSeeAuditBackup={canSeeAuditBackup} clauseEvidence={clauseEvidence} canManageClauseStatus={canManageClauseStatus}
           addClauseEvidenceAction={addClauseEvidenceAction} removeClauseEvidenceAction={removeClauseEvidenceAction} />}
-        {tab === "tasks" && <Tasks tasks={tasks} updateTasks={updateTasks} setTaskStatusAction={setTaskStatusAction} approveTaskCompletionAction={approveTaskCompletionAction} personnel={personnel} canEdit={canEdit} canAssignTasks={canAssignTasks} />}
+        {tab === "tasks" && <Tasks tasks={tasks} updateTasks={updateTasks} setTaskStatusAction={setTaskStatusAction} approveTaskCompletionAction={approveTaskCompletionAction}
+          personnel={personnel} canEdit={canEdit} canAssignTasks={canAssignTasks} taskComments={taskComments} currentUser={currentUser}
+          addTaskCommentAction={addTaskCommentAction} deleteTaskCommentAction={deleteTaskCommentAction} />}
         {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} />}
         {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} />}
         {tab === "iqc" && <IQCPage qcMachines={qcMachines} updateQcMachines={updateQcMachines}
@@ -816,7 +849,7 @@ export default function App() {
           authorizeQcRunAction={authorizeQcRunAction} bulkImportQcRuns={bulkImportQcRuns} />}
         {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit}
           ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} />}
-        {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} />}
+        {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} currentUser={currentUser} confirmCompetencyAssessmentAction={confirmCompetencyAssessmentAction} />}
         {tab === "equipment" && <Equipment equipment={equipment} updateEquipment={updateEquipment}
           equipmentRecords={equipmentRecords} updateEquipmentRecords={updateEquipmentRecords} personnel={personnel} canEdit={canEdit}
           equipmentDowntime={equipmentDowntime} reportDowntimeAction={reportDowntimeAction} resolveDowntimeAction={resolveDowntimeAction} />}
@@ -1165,10 +1198,12 @@ function MiniTaskForm({ personnel, onSave, onCancel }) {
 }
 
 // ---------------- Tasks ----------------
-function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks }) {
+function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks, taskComments, currentUser, addTaskCommentAction, deleteTaskCommentAction }) {
   const [showForm, setShowForm] = useState(false);
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterAssignee, setFilterAssignee] = useState("All");
+  const [commentsOpenFor, setCommentsOpenFor] = useState(null);
+  const [newComment, setNewComment] = useState("");
 
   const addTask = (draft) => {
     updateTasks([{ id: uid(), ...draft, status: "Open", createdAt: todayISO() }, ...tasks]);
@@ -1211,8 +1246,10 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
           const overdue = t.status !== "Done" && t.dueDate && t.dueDate < todayISO();
           const trulyDone = t.status === "Done" && t.completionApproved;
           const awaitingApproval = t.status === "Done" && !t.completionApproved;
+          const commentsForTask = taskComments.filter(c => c.taskId === t.id);
           return (
-            <div key={t.id} className="flex items-center gap-3 px-5 py-3">
+            <div key={t.id}>
+            <div className="flex items-center gap-3 px-5 py-3">
               <button disabled={!canEdit} onClick={() => setTaskStatusAction(t.id, t.status === "Done" ? "Open" : "Done")} className="disabled:opacity-50">
                 {trulyDone ? <CheckCircle2 size={18} color={COLORS.teal} /> : awaitingApproval ? <Clock size={18} color={COLORS.amber} /> : <Circle size={18} color="#C7D6D2" />}
               </button>
@@ -1235,7 +1272,37 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
               </select>
               <Badge color={overdue ? COLORS.red : "#9AA5A3"}>{t.dueDate || "no date"}</Badge>
               <Badge color={t.priority === "High" ? COLORS.red : t.priority === "Medium" ? COLORS.amber : "#9AA5A3"}>{t.priority}</Badge>
+              <button onClick={() => setCommentsOpenFor(commentsOpenFor === t.id ? null : t.id)} className="text-xs text-gray-400 flex items-center gap-1 whitespace-nowrap">
+                {commentsForTask.length} comment{commentsForTask.length !== 1 ? "s" : ""} {commentsOpenFor === t.id ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              </button>
               {canAssignTasks && <button onClick={() => removeTask(t.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+            </div>
+            {commentsOpenFor === t.id && (
+              <div className="px-5 pb-3 pl-12" style={{ background: COLORS.bg }}>
+                {commentsForTask.length === 0 && <div className="text-xs text-gray-400 py-2">No comments yet.</div>}
+                {commentsForTask.map(c => (
+                  <div key={c.id} className="flex items-start gap-2 text-xs py-1.5 border-b" style={{ borderColor: "#EEF3F1" }}>
+                    <div className="flex-1">
+                      <span className="font-medium" style={{ color: COLORS.navy }}>{c.authorName}</span>
+                      <span className="text-gray-400"> · {(c.createdAt || "").slice(0, 16).replace("T", " ")}</span>
+                      <div className="text-gray-600 mt-0.5">{c.comment}</div>
+                    </div>
+                    {(currentUser.name === c.authorName || canAssignTasks) && (
+                      <button onClick={() => deleteTaskCommentAction(c.id)} className="text-gray-300 hover:text-red-500"><X size={12} /></button>
+                    )}
+                  </div>
+                ))}
+                {canEdit && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <input className={inputCls} style={{ ...inputStyle, fontSize: 12, padding: "5px 8px" }} placeholder="Add a comment…"
+                      value={commentsOpenFor === t.id ? newComment : ""} onChange={e => setNewComment(e.target.value)}
+                      onKeyDown={e => { if (e.key === "Enter" && newComment.trim()) { addTaskCommentAction(t.id, newComment.trim()); setNewComment(""); } }} />
+                    <button onClick={() => { if (newComment.trim()) { addTaskCommentAction(t.id, newComment.trim()); setNewComment(""); } }}
+                      className="text-xs px-3 py-1.5 rounded-md text-white whitespace-nowrap" style={{ background: COLORS.teal }}>Post</button>
+                  </div>
+                )}
+              </div>
+            )}
             </div>
           );
         })}
@@ -1405,6 +1472,7 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit }) {
               <span className="text-sm flex-1 truncate">{n.title}</span>
               <Badge color={n.severity === "Critical" ? COLORS.red : n.severity === "Major" ? COLORS.amber : "#9AA5A3"}>{n.severity}</Badge>
               <Badge color={n.status === "Closed" ? COLORS.teal : "#9AA5A3"}>{n.status}</Badge>
+              {n.relatedNcId && <Badge color={COLORS.amber}>Recurrence</Badge>}
               {n.clauseId && <span className="text-xs text-gray-400">Clause {n.clauseId}</span>}
             </button>
             {expanded === n.id && (
@@ -1457,6 +1525,16 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit }) {
                   </Field>
                   <Field label="Closed date">
                     <input type="date" className={inputCls} style={inputStyle} value={n.closedDate || ""} onChange={e => setNc(n.id, { closedDate: e.target.value })} />
+                  </Field>
+                  <Field label="Recurrence of (optional)">
+                    <select className={inputCls} style={inputStyle} value={n.relatedNcId || ""} onChange={e => setNc(n.id, { relatedNcId: e.target.value })}>
+                      <option value="">Not a recurrence of a previous NC</option>
+                      {ncs.filter(other => other.id !== n.id).map(other => <option key={other.id} value={other.id}>{other.ncNumber} — {other.title}</option>)}
+                    </select>
+                    {n.relatedNcId && (() => {
+                      const related = ncs.find(o => o.id === n.relatedNcId);
+                      return related ? <div className="text-[11px] mt-1" style={{ color: COLORS.amber }}>Marked as a recurrence of {related.ncNumber} — worth checking whether the earlier corrective action actually held.</div> : null;
+                    })()}
                   </Field>
                 </div>
 
@@ -1912,7 +1990,7 @@ function RiskForm({ personnel, onSave, onCancel }) {
   );
 }
 
-function Competency({ competency, updateCompetency, personnel, canEdit }) {
+function Competency({ competency, updateCompetency, personnel, canEdit, currentUser, confirmCompetencyAssessmentAction }) {
   const [showForm, setShowForm] = useState(false);
   const [filterPerson, setFilterPerson] = useState("All");
   const [filterType, setFilterType] = useState("All");
@@ -2026,6 +2104,17 @@ function Competency({ competency, updateCompetency, personnel, canEdit }) {
                 <button onClick={() => removeRecord(c.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>
               </div>
               {c.notes && <div className="text-xs text-gray-500 mt-1 pl-7">{c.notes}</div>}
+              <div className="pl-7 mt-1.5 flex items-center gap-2">
+                {c.assesseeConfirmed ? (
+                  <Badge color={COLORS.teal}>Confirmed by {c.personnelName} · {(c.assesseeConfirmedAt || "").slice(0, 10)}</Badge>
+                ) : currentUser.name === c.personnelName ? (
+                  <button onClick={() => confirmCompetencyAssessmentAction(c.id)} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                    This is accurate — confirm
+                  </button>
+                ) : (
+                  <span className="text-xs text-gray-400">Awaiting {c.personnelName}'s confirmation</span>
+                )}
+              </div>
             </div>
           );
         })}
@@ -4114,6 +4203,55 @@ function AuditBackup() {
     }
   };
 
+  const buildAuditReportRows = () => filtered.map(a => ({
+    "Timestamp": new Date(a.ts).toLocaleString(),
+    "Entity": a.entity,
+    "Action": a.action,
+    "Summary": a.summary || "",
+    "Actor": a.actor_name || "",
+    "Role": a.actor_role || "",
+  }));
+
+  const downloadAuditLogExcel = () => {
+    exportRowsToExcel(buildAuditReportRows(), "Audit Log", `audit-log-${dateFrom || "all"}-to-${dateTo || "all"}.xlsx`);
+  };
+
+  const printAuditLogReport = () => {
+    const rows = buildAuditReportRows();
+    const w = window.open("", "_blank");
+    if (!w) { alert("Please allow pop-ups for this site to print the report."); return; }
+    const tableRows = rows.map(r => `
+      <tr>
+        <td>${escapeHtml(r["Timestamp"])}</td>
+        <td>${escapeHtml(r["Entity"])}</td>
+        <td>${escapeHtml(r["Action"])}</td>
+        <td>${escapeHtml(r["Summary"])}</td>
+        <td>${escapeHtml(r["Actor"])}</td>
+        <td>${escapeHtml(r["Role"])}</td>
+      </tr>`).join("");
+    w.document.write(`<!DOCTYPE html><html><head><title>Audit Log Report</title>
+      <style>
+        body { font-family: -apple-system, system-ui, sans-serif; padding: 32px; color: #0F2A3D; }
+        h1 { font-size: 18px; margin-bottom: 2px; }
+        p.meta { color: #6B7A78; font-size: 12px; margin-top: 0; margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #D8E5E1; padding: 6px 10px; font-size: 11px; text-align: left; }
+        th { background: #0F2A3D; color: white; }
+        tr:nth-child(even) td { background: #F6FAF9; }
+      </style></head>
+      <body>
+        <h1>Audit Log Report</h1>
+        <p class="meta">Lab QMS \u2014 ${rows.length} record(s)${dateFrom ? ` \u2014 from ${escapeHtml(dateFrom)}` : ""}${dateTo ? ` to ${escapeHtml(dateTo)}` : ""} \u2014 generated ${escapeHtml(new Date().toLocaleString())}</p>
+        <table>
+          <thead><tr><th>Timestamp</th><th>Entity</th><th>Action</th><th>Summary</th><th>Actor</th><th>Role</th></tr></thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+      </body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
+
   return (
     <div className="p-8 max-w-5xl">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Audit log & backup</h1>
@@ -4146,6 +4284,12 @@ function AuditBackup() {
           <span className="text-xs text-gray-400">to</span>
           <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)} title="To date" className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
           <button onClick={runSearch} className="text-xs px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>Search</button>
+          <button onClick={downloadAuditLogExcel} className="text-xs flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+            <Download size={12} /> Excel
+          </button>
+          <button onClick={printAuditLogReport} className="text-xs flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+            <Download size={12} /> Print / PDF
+          </button>
         </div>
       </div>
       <div className="bg-white rounded-lg border divide-y max-h-[520px] overflow-auto" style={{ borderColor: "#E1EBE8" }}>

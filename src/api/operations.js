@@ -20,6 +20,12 @@ export async function deleteCompetency(id) {
   const { error } = await supabase.from("competency_records").delete().eq("id", id);
   if (error) throw new Error(error.message);
 }
+/** Restricted server-side (0015 migration) to the person the record is actually about — not just left to the UI to enforce. */
+export async function confirmCompetencyAssessment(recordId) {
+  const { data, error } = await supabase.rpc("confirm_competency_assessment", { p_record_id: recordId });
+  if (error) throw new Error(error.message);
+  return data;
+}
 
 // ---------------- Equipment inventory (Clauses 6.3/6.4) ----------------
 export async function listEquipment() {

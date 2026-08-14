@@ -131,6 +131,15 @@ export const taskToDb = (t, personnel) => ({
   recurrence_parent_id: t.recurrenceParentId || null,
 });
 
+// ---------------- task_comments ----------------
+export const taskCommentFromDb = (row, personnel) => ({
+  id: row.id,
+  taskId: row.task_id,
+  authorName: idToName(personnel, row.author_id),
+  comment: row.comment,
+  createdAt: row.created_at,
+});
+
 // ---------------- nonconformities ----------------
 export const ncFromDb = (row, personnel) => ({
   id: row.id,
@@ -156,6 +165,7 @@ export const ncFromDb = (row, personnel) => ({
   effectivenessNotes: row.effectiveness_notes || "",
   effectivenessVerifiedBy: idToName(personnel, row.effectiveness_verified_by),
   effectivenessVerifiedAt: row.effectiveness_verified_at || "",
+  relatedNcId: row.related_nc_id || "",
 });
 export const ncToDb = (n, personnel) => ({
   nc_number: n.ncNumber,
@@ -180,6 +190,7 @@ export const ncToDb = (n, personnel) => ({
   effectiveness_notes: n.effectivenessNotes || null,
   effectiveness_verified_by: nameToId(personnel, n.effectivenessVerifiedBy),
   effectiveness_verified_at: n.effectivenessVerifiedAt || null,
+  related_nc_id: n.relatedNcId || null,
 });
 
 // ---------------- risks (Clause 5.6) ----------------
@@ -248,6 +259,8 @@ export const competencyFromDb = (row, personnel) => ({
   date: row.date || "",
   dueDate: row.due_date || "",
   notes: row.notes || "",
+  assesseeConfirmed: row.assessee_confirmed || false,
+  assesseeConfirmedAt: row.assessee_confirmed_at || "",
 });
 export const competencyToDb = (c, personnel) => ({
   personnel_id: nameToId(personnel, c.personnelName),
