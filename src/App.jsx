@@ -986,7 +986,8 @@ export default function App() {
           qcControls={qcControls} updateQcControls={updateQcControls}
           qcRuns={qcRuns} updateQcRuns={updateQcRuns} personnel={personnel}
           canEdit={canEdit} canAuthorizeIQC={canAuthorizeIQC} currentUser={currentUser}
-          authorizeQcRunAction={authorizeQcRunAction} bulkImportQcRuns={bulkImportQcRuns} />}
+          authorizeQcRunAction={authorizeQcRunAction} bulkImportQcRuns={bulkImportQcRuns}
+          equipment={equipment} updateEquipment={updateEquipment} />}
         {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit}
           ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} />}
         {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} currentUser={currentUser} confirmCompetencyAssessmentAction={confirmCompetencyAssessmentAction} />}
@@ -3042,7 +3043,7 @@ function AuthorizeControl({ run, currentUser, canAuthorize, onAuthorize }) {
 }
 
 // ---------------- IQC & Levey-Jennings (Clause 7.3.7 Quality control) ----------------
-function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns }) {
+function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns, equipment, updateEquipment }) {
   const [showMachineForm, setShowMachineForm] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [selectedMachineId, setSelectedMachineId] = useState(qcMachines[0]?.id || null);
@@ -3061,7 +3062,23 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
     if (!selectedMachineId && qcMachines.length) setSelectedMachineId(qcMachines[0].id);
   }, [qcMachines]);
 
-  const addMachine = (draft) => { updateQcMachines([{ id: uid(), ...draft }, ...qcMachines]); setShowMachineForm(false); };
+  /**
+   * If the form was used to pick an existing equipment record rather than
+   * typing a brand-new machine, this links them together automatically —
+   * using the REAL database-assigned id from the synced result, not the
+   * temporary client-side id, same lesson learned from the earlier
+   * NC-from-EQA bug (a temporary id never actually exists in the database).
+   */
+  const addMachine = async (draft) => {
+    const { linkedEquipmentId, ...machineDraft } = draft;
+    const syncedMachines = await updateQcMachines([{ id: uid(), ...machineDraft }, ...qcMachines]);
+    setShowMachineForm(false);
+    if (!syncedMachines || !linkedEquipmentId) return;
+    const createdMachine = syncedMachines.find(m => m.name === machineDraft.name);
+    if (createdMachine) {
+      updateEquipment(equipment.map(e => e.id === linkedEquipmentId ? { ...e, qcMachineId: createdMachine.id } : e));
+    }
+  };
   const removeMachine = (id) => {
     updateQcMachines(qcMachines.filter(m => m.id !== id));
     const paramIds = qcParameters.filter(p => p.machineId === id).map(p => p.id);
@@ -3239,7 +3256,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
       />
       <p className="text-xs text-gray-400 -mt-2 mb-4">Download, edit in Excel, then re-import — rows with a matching ID update that analyser; new rows (blank ID) are added. Discipline must be Hematology, Biochemistry, or Immunochemistry.</p>
 
-      {showMachineForm && canEdit && <MachineForm onCancel={() => setShowMachineForm(false)} onSave={addMachine} />}
+      {showMachineForm && canEdit && <MachineForm onCancel={() => setShowMachineForm(false)} onSave={addMachine} equipment={equipment} />}
 
       {/* Machine tabs grouped by discipline */}
       <div className="mb-6 space-y-3">
@@ -3711,12 +3728,32 @@ function LJChart({ runs, mean, sd }) {
   );
 }
 
-function MachineForm({ onSave, onCancel }) {
+function MachineForm({ onSave, onCancel, equipment }) {
   const [name, setName] = useState("");
   const [discipline, setDiscipline] = useState(DISCIPLINES[0]);
   const [model, setModel] = useState("");
+  const [linkedEquipmentId, setLinkedEquipmentId] = useState("");
+
+  const applyEquipment = (equipmentId) => {
+    setLinkedEquipmentId(equipmentId);
+    const eq = equipment.find(e => e.id === equipmentId);
+    if (eq) {
+      setName(eq.name);
+      setModel(eq.model || "");
+    }
+  };
+
   return (
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+      {equipment.length > 0 && (
+        <Field label="Select from existing equipment (optional)">
+          <select className={inputCls} style={inputStyle} value={linkedEquipmentId} onChange={e => applyEquipment(e.target.value)}>
+            <option value="">Type a new machine below instead…</option>
+            {equipment.map(eq => <option key={eq.id} value={eq.id}>{eq.name}{eq.model ? ` (${eq.model})` : ""}</option>)}
+          </select>
+          <div className="text-[11px] text-gray-400 mt-1">Picking one fills in the name and model, and links this IQC machine back to that equipment record.</div>
+        </Field>
+      )}
       <div className="grid grid-cols-3 gap-3">
         <Field label="Machine / analyser name"><input className={inputCls} style={inputStyle} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Medonic M51" /></Field>
         <Field label="Discipline">
@@ -3728,7 +3765,7 @@ function MachineForm({ onSave, onCancel }) {
       </div>
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button onClick={() => name.trim() && onSave({ name, discipline, model })} className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Add machine</button>
+        <button onClick={() => name.trim() && onSave({ name, discipline, model, linkedEquipmentId })} className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Add machine</button>
       </div>
     </div>
   );
