@@ -712,6 +712,23 @@ export default function App() {
     }
   };
 
+  /**
+   * The ONE place notification toggles get changed. Settings used to keep
+   * its own separate local copy that only touched the database — meaning
+   * the shared copy every action actually checks (below, and in addTask/
+   * addNc/publishControlledDocumentAction) never learned about the change
+   * until a full page reload. Now there's exactly one copy, updated here.
+   */
+  const toggleNotificationSettingAction = async (eventKey, currentlyEnabled) => {
+    setNotificationSettings(prev => ({ ...prev, [eventKey]: !currentlyEnabled }));
+    try {
+      await notificationSettingsApi.setNotificationEnabled(eventKey, !currentlyEnabled);
+    } catch (e) {
+      alert("Could not update this setting.\n\n" + e.message);
+      setNotificationSettings(prev => ({ ...prev, [eventKey]: currentlyEnabled })); // revert on failure
+    }
+  };
+
   const addTaskCommentAction = async (taskId, comment) => {
     try {
       const row = await taskCommentsApi.addTaskComment(taskId, nameToId(personnel, currentUser.name), comment);
@@ -985,7 +1002,8 @@ export default function App() {
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} addManagementReview={addManagementReview}
           deleteManagementReview={deleteManagementReview} stats={stats} currentUser={currentUser} />}
         {tab === "audit" && canSeeAuditBackup && <AuditBackup />}
-        {tab === "settings" && isAdmin && <Settings qcMachines={qcMachines} currentUser={currentUser} />}
+        {tab === "settings" && isAdmin && <Settings qcMachines={qcMachines} currentUser={currentUser}
+          notificationSettings={notificationSettings} toggleNotificationSettingAction={toggleNotificationSettingAction} />}
       </div>
     </div>
   );
@@ -4983,7 +5001,7 @@ function AuditBackup() {
 }
 
 // ---------------- Settings (Admin only) ----------------
-function Settings({ qcMachines, currentUser }) {
+function Settings({ qcMachines, currentUser, notificationSettings, toggleNotificationSettingAction }) {
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -4992,8 +5010,6 @@ function Settings({ qcMachines, currentUser }) {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [justCreatedKey, setJustCreatedKey] = useState(null); // { plainKey, keyPrefix } — shown once, then discarded
-  const [notifSettings, setNotifSettings] = useState([]);
-  const [notifLoading, setNotifLoading] = useState(true);
   const [testEmailStatus, setTestEmailStatus] = useState("");
   const [resendStatus, setResendStatus] = useState(null);
   const [resendStatusLoading, setResendStatusLoading] = useState(true);
@@ -5015,28 +5031,6 @@ function Settings({ qcMachines, currentUser }) {
 
   const iqcEndpointUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-qc-result`;
   const eqaEndpointUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-eqa-result`;
-
-  const loadNotifSettings = async () => {
-    setNotifLoading(true);
-    try {
-      setNotifSettings(await notificationSettingsApi.listNotificationSettings());
-    } catch (e) {
-      console.error("Could not load notification settings:", e);
-    } finally {
-      setNotifLoading(false);
-    }
-  };
-  useEffect(() => { loadNotifSettings(); }, []);
-
-  const toggleNotif = async (eventKey, currentlyEnabled) => {
-    setNotifSettings(prev => prev.map(s => s.event_key === eventKey ? { ...s, enabled: !currentlyEnabled } : s));
-    try {
-      await notificationSettingsApi.setNotificationEnabled(eventKey, !currentlyEnabled);
-    } catch (e) {
-      alert("Could not update this setting.\n\n" + e.message);
-      loadNotifSettings();
-    }
-  };
 
   const sendTestEmail = async () => {
     if (!currentUser?.email) { setTestEmailStatus("Your own account has no email on file — add one on the Personnel page first."); return; }
@@ -5244,14 +5238,12 @@ function Settings({ qcMachines, currentUser }) {
           this page would defeat the purpose of keeping it secret in the first place.
         </p>
         <div className="border rounded-md divide-y mb-4" style={{ borderColor: "#EEF3F1" }}>
-          {notifLoading && <div className="text-xs text-gray-400 px-3 py-3">Loading…</div>}
-          {!notifLoading && NOTIFICATION_EVENT_LABELS.map(({ key, label: eventLabel }) => {
-            const row = notifSettings.find(s => s.event_key === key);
-            const enabled = row?.enabled !== false;
+          {NOTIFICATION_EVENT_LABELS.map(({ key, label: eventLabel }) => {
+            const enabled = notificationSettings[key] !== false;
             return (
               <div key={key} className="px-3 py-2 flex items-center justify-between">
                 <span className="text-sm">{eventLabel}</span>
-                <button onClick={() => toggleNotif(key, enabled)}
+                <button onClick={() => toggleNotificationSettingAction(key, enabled)}
                   className="text-xs px-3 py-1 rounded-full"
                   style={{ background: enabled ? COLORS.teal : "#E1EBE8", color: enabled ? "white" : "#9AA5A3" }}>
                   {enabled ? "On" : "Off"}
