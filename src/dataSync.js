@@ -295,6 +295,7 @@ export const equipmentFromDb = (row) => ({
   location: row.location || "",
   commissionDate: row.commission_date || "",
   status: row.status,
+  qcMachineId: row.qc_machine_id || "",
 });
 export const equipmentToDb = (e) => ({
   name: e.name,
@@ -304,6 +305,7 @@ export const equipmentToDb = (e) => ({
   location: e.location || null,
   commission_date: e.commissionDate || null,
   status: e.status,
+  qc_machine_id: e.qcMachineId || null,
 });
 
 // ---------------- equipment_records ----------------
@@ -389,6 +391,7 @@ export const eqaFromDb = (row) => ({
   evaluation: row.evaluation,
   notes: row.notes || "",
   linkedNcId: row.linked_nc_id || "",
+  nextCycleDate: row.next_cycle_date || "",
 });
 export const eqaToDb = (e) => ({
   discipline: e.discipline,
@@ -403,6 +406,7 @@ export const eqaToDb = (e) => ({
   evaluation: e.evaluation || "Not yet received",
   notes: e.notes || null,
   linked_nc_id: e.linkedNcId || null,
+  next_cycle_date: e.nextCycleDate || null,
 });
 
 // ---------------- documents ----------------

@@ -753,11 +753,21 @@ export default function App() {
     }).length;
     const tasksAwaitingApproval = tasks.filter(t => t.status === "Done" && !t.completionApproved).length;
 
+    // Only the MOST RECENT event per parameter matters for "when's the next cycle due" — an older event's next_cycle_date becomes stale the moment a newer result comes in.
+    const latestEqaByParameter = {};
+    eqaEvents.forEach(e => {
+      const key = e.parameter;
+      if (!latestEqaByParameter[key] || (e.dateReceived || "") > (latestEqaByParameter[key].dateReceived || "")) latestEqaByParameter[key] = e;
+    });
+    const latestEqaList = Object.values(latestEqaByParameter);
+    const eqaCyclesOverdue = latestEqaList.filter(e => e.nextCycleDate && e.nextCycleDate < todayISO()).length;
+    const eqaCyclesDueSoon = latestEqaList.filter(e => e.nextCycleDate && e.nextCycleDate >= todayISO() && e.nextCycleDate <= in30ISO).length;
+
     return {
       counts, openTasks, overdueTasks, openNcs, criticalNcs, totalClauses: ALL_SUBCLAUSES.length,
       competencyOverdue, competencyDueSoon, equipmentOverdue, equipmentDueSoon,
       iqcUnauthorizedViolations, eqaUnsatisfactory, controlLotsExpired, controlLotsExpiringSoon, documentsOverdueForReview,
-      clausesOverdueForReview, tasksAwaitingApproval,
+      clausesOverdueForReview, tasksAwaitingApproval, eqaCyclesOverdue, eqaCyclesDueSoon,
     };
   }, [clauseStatus, tasks, ncs, competency, equipmentRecords, qcParameters, qcControls, qcRuns, eqaEvents, documents]);
 
@@ -881,7 +891,8 @@ export default function App() {
         {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} currentUser={currentUser} confirmCompetencyAssessmentAction={confirmCompetencyAssessmentAction} />}
         {tab === "equipment" && <Equipment equipment={equipment} updateEquipment={updateEquipment}
           equipmentRecords={equipmentRecords} updateEquipmentRecords={updateEquipmentRecords} personnel={personnel} canEdit={canEdit}
-          equipmentDowntime={equipmentDowntime} reportDowntimeAction={reportDowntimeAction} resolveDowntimeAction={resolveDowntimeAction} />}
+          equipmentDowntime={equipmentDowntime} reportDowntimeAction={reportDowntimeAction} resolveDowntimeAction={resolveDowntimeAction}
+          qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} qcRuns={qcRuns} />}
         {tab === "documents" && <Documents documents={documents} updateDocuments={updateDocuments} personnel={personnel}
           currentUser={currentUser} canEdit={canEdit} canPublishControlledDocs={canPublishControlledDocs}
           publishControlledDocumentAction={publishControlledDocumentAction}
@@ -928,6 +939,7 @@ function Dashboard({ stats, tasks, ncs, personnel, setTab, competency, equipment
           ${row("Clause compliance", `${pct}% (${stats.counts["Compliant"]} of ${stats.totalClauses})`)}
           ${row("Non-conformant clauses", stats.counts["Non-conformant"])}
           ${row("Clauses overdue for review", stats.clausesOverdueForReview)}
+          ${row("EQA cycles overdue", `${stats.eqaCyclesOverdue} (${stats.eqaCyclesDueSoon} due within 30 days)`)}
         </table>
         <h2>Tasks & NCs</h2>
         <table>
@@ -982,6 +994,10 @@ function Dashboard({ stats, tasks, ncs, personnel, setTab, competency, equipment
 
       <div className="grid grid-cols-2 gap-4 mb-4">
         <StatCard label="Clauses overdue for review" value={stats.clausesOverdueForReview} sub="not reviewed in the last 12 months" color={stats.clausesOverdueForReview ? COLORS.amber : COLORS.teal} />
+        <StatCard label="EQA cycles overdue" value={stats.eqaCyclesOverdue} sub={`${stats.eqaCyclesDueSoon} due within 30 days`} color={stats.eqaCyclesOverdue ? COLORS.red : COLORS.teal} />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4 mb-4">
         {canAssignTasks && (
           <StatCard label="Tasks awaiting approval" value={stats.tasksAwaitingApproval} sub="marked Done by the assignee, not yet approved" color={stats.tasksAwaitingApproval ? COLORS.amber : COLORS.teal} />
         )}
@@ -2479,7 +2495,7 @@ function CompetencyForm({ personnel, existingTitles, onSave, onCancel }) {
 }
 
 // ---------------- Equipment & Records (Clauses 6.3 / 6.4: IQ, OQ, PQ, calibration, maintenance) ----------------
-function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipmentRecords, personnel, canEdit, equipmentDowntime, reportDowntimeAction, resolveDowntimeAction }) {
+function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipmentRecords, personnel, canEdit, equipmentDowntime, reportDowntimeAction, resolveDowntimeAction, qcMachines, qcParameters, qcControls, qcRuns }) {
   const [showEquipForm, setShowEquipForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [recordDraftFor, setRecordDraftFor] = useState(null);
@@ -2507,6 +2523,19 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
     .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
   const downtimeFor = (equipmentId) => equipmentDowntime.filter(d => d.equipmentId === equipmentId)
     .sort((a, b) => (b.startedAt || "").localeCompare(a.startedAt || ""));
+
+  /** Recorded authorization status over the last 30 days for the linked machine — a snapshot, not a live Westgard re-check (same honest framing as the IQC summary report). */
+  const iqcHealthForMachine = (machineId) => {
+    if (!machineId) return null;
+    const paramIds = new Set(qcParameters.filter(p => p.machineId === machineId).map(p => p.id));
+    const controlIds = new Set(qcControls.filter(c => paramIds.has(c.parameterId)).map(c => c.id));
+    const cutoff = (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); })();
+    const recentRuns = qcRuns.filter(r => controlIds.has(r.controlId) && r.date >= cutoff);
+    return {
+      totalRuns: recentRuns.length,
+      unauthorized: recentRuns.filter(r => !r.authorized).length,
+    };
+  };
 
   const dueStatus = (dueDate) => {
     if (!dueDate) return null;
@@ -2597,6 +2626,27 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
                         {EQUIPMENT_STATUS.map(s => <option key={s}>{s}</option>)}
                       </select>
                     </Field>
+                  </div>
+
+                  <div className="mb-3">
+                    <Field label="Linked IQC machine (optional)">
+                      <select className={inputCls} style={{ ...inputStyle, maxWidth: 320 }} value={eq.qcMachineId || ""} onChange={e => setEquip(eq.id, { qcMachineId: e.target.value })}>
+                        <option value="">Not linked to an IQC machine</option>
+                        {qcMachines.map(m => <option key={m.id} value={m.id}>{m.name} ({m.discipline})</option>)}
+                      </select>
+                    </Field>
+                    {eq.qcMachineId && (() => {
+                      const health = iqcHealthForMachine(eq.qcMachineId);
+                      if (!health || health.totalRuns === 0) return <div className="text-xs text-gray-400 mt-1">No IQC runs recorded for this machine in the last 30 days.</div>;
+                      return (
+                        <div className="text-xs mt-1 flex items-center gap-2">
+                          <Badge color={health.unauthorized > 0 ? COLORS.amber : COLORS.teal}>
+                            {health.totalRuns} IQC run{health.totalRuns !== 1 ? "s" : ""} in last 30 days
+                          </Badge>
+                          {health.unauthorized > 0 && <span className="text-gray-500">{health.unauthorized} not yet authorized</span>}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   <div className="flex items-center justify-between mb-2">
@@ -3565,11 +3615,14 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
   const [showTrends, setShowTrends] = useState(false);
   const [trendParameter, setTrendParameter] = useState("");
 
-  const addEvent = (draft) => {
-    const sdi = draft.peerMean !== "" && draft.peerSD && draft.peerSD !== "0"
-      ? (parseFloat(draft.labResult) - parseFloat(draft.peerMean)) / parseFloat(draft.peerSD) : null;
-    const evaluation = sdi === null ? "Not yet received" : Math.abs(sdi) <= 2 ? "Satisfactory" : Math.abs(sdi) <= 3 ? "Marginal" : "Unsatisfactory";
-    updateEqaEvents([{ id: uid(), ...draft, sdi, evaluation }, ...eqaEvents]);
+  const addEvents = (drafts) => {
+    const newEvents = drafts.map(draft => {
+      const sdi = draft.peerMean !== "" && draft.peerSD && draft.peerSD !== "0"
+        ? (parseFloat(draft.labResult) - parseFloat(draft.peerMean)) / parseFloat(draft.peerSD) : null;
+      const evaluation = sdi === null ? "Not yet received" : Math.abs(sdi) <= 2 ? "Satisfactory" : Math.abs(sdi) <= 3 ? "Marginal" : "Unsatisfactory";
+      return { id: uid(), ...draft, sdi, evaluation };
+    });
+    updateEqaEvents([...newEvents, ...eqaEvents]);
     setShowForm(false);
   };
   const setEvent = (id, patch) => updateEqaEvents(eqaEvents.map(e => e.id === id ? { ...e, ...patch } : e));
@@ -3646,7 +3699,7 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
         </select>
       </div>
 
-      {showForm && canEdit && <EQAForm qcMachines={qcMachines} onCancel={() => setShowForm(false)} onSave={addEvent} />}
+      {showForm && canEdit && <EQAForm qcMachines={qcMachines} onCancel={() => setShowForm(false)} onSave={addEvents} />}
 
       <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
         {filtered.length === 0 && <Empty text="No EQA results logged yet." />}
@@ -3676,6 +3729,13 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
               )
             )}
             {e.notes && <div className="text-xs text-gray-400 mt-1">{e.notes}</div>}
+            {e.nextCycleDate && (
+              <div className="mt-1">
+                <Badge color={e.nextCycleDate < todayISO() ? COLORS.red : "#9AA5A3"}>
+                  {e.nextCycleDate < todayISO() ? "Next cycle overdue" : "Next cycle due"} {e.nextCycleDate}
+                </Badge>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -3684,21 +3744,47 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
 }
 
 function EQAForm({ qcMachines, onSave, onCancel }) {
+  const [mode, setMode] = useState("single"); // "single" | "batch"
   const [discipline, setDiscipline] = useState(DISCIPLINES[0]);
   const [machineId, setMachineId] = useState("");
-  const [parameter, setParameter] = useState("");
   const [provider, setProvider] = useState("");
   const [cycle, setCycle] = useState("");
   const [dateReceived, setDateReceived] = useState(todayISO());
+  const [nextCycleDate, setNextCycleDate] = useState("");
+  const [notes, setNotes] = useState("");
+
+  // Single-entry fields
+  const [parameter, setParameter] = useState("");
   const [labResult, setLabResult] = useState("");
   const [peerMean, setPeerMean] = useState("");
   const [peerSD, setPeerSD] = useState("");
-  const [notes, setNotes] = useState("");
+
+  // Batch-entry rows — same shared header above, one row per analyte in the panel
+  const [rows, setRows] = useState([{ parameter: "", labResult: "", peerMean: "", peerSD: "" }]);
+  const updateRow = (i, patch) => setRows(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const addRow = () => setRows(prev => [...prev, { parameter: "", labResult: "", peerMean: "", peerSD: "" }]);
+  const removeRow = (i) => setRows(prev => prev.filter((_, idx) => idx !== i));
 
   const machinesForDiscipline = qcMachines.filter(m => m.discipline === discipline);
+  const sharedFields = { discipline, machineId, provider, cycle, dateReceived, nextCycleDate, notes };
+
+  const handleSave = () => {
+    if (mode === "single") {
+      if (!parameter.trim() || labResult === "") return;
+      onSave([{ ...sharedFields, parameter, labResult, peerMean, peerSD }]);
+    } else {
+      const validRows = rows.filter(r => r.parameter.trim() && r.labResult !== "");
+      if (validRows.length === 0) return;
+      onSave(validRows.map(r => ({ ...sharedFields, ...r })));
+    }
+  };
 
   return (
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+      <div className="flex gap-2 mb-3">
+        <button onClick={() => setMode("single")} className="text-xs px-3 py-1.5 rounded-md border" style={{ borderColor: mode === "single" ? COLORS.teal : "#D8E5E1", color: mode === "single" ? COLORS.teal : COLORS.ink, background: mode === "single" ? COLORS.mint : "white" }}>Single result</button>
+        <button onClick={() => setMode("batch")} className="text-xs px-3 py-1.5 rounded-md border" style={{ borderColor: mode === "batch" ? COLORS.teal : "#D8E5E1", color: mode === "batch" ? COLORS.teal : COLORS.ink, background: mode === "batch" ? COLORS.mint : "white" }}>Batch entry (full panel)</button>
+      </div>
       <div className="grid grid-cols-3 gap-3">
         <Field label="Discipline">
           <select className={inputCls} style={inputStyle} value={discipline} onChange={e => { setDiscipline(e.target.value); setMachineId(""); }}>
@@ -3710,19 +3796,40 @@ function EQAForm({ qcMachines, onSave, onCancel }) {
             <option value="">Not machine-specific</option>{machinesForDiscipline.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </Field>
-        <Field label="Parameter"><input className={inputCls} style={inputStyle} value={parameter} onChange={e => setParameter(e.target.value)} placeholder="e.g. Hemoglobin, Glucose, TSH" /></Field>
         <Field label="Provider / scheme"><input className={inputCls} style={inputStyle} value={provider} onChange={e => setProvider(e.target.value)} placeholder="e.g. RIQAS, UK NEQAS, CAP" /></Field>
         <Field label="Cycle / round"><input className={inputCls} style={inputStyle} value={cycle} onChange={e => setCycle(e.target.value)} placeholder="e.g. 2026 Round 4" /></Field>
         <Field label="Date result received"><input type="date" className={inputCls} style={inputStyle} value={dateReceived} onChange={e => setDateReceived(e.target.value)} /></Field>
-        <Field label="Lab result"><input type="number" step="any" className={inputCls} style={inputStyle} value={labResult} onChange={e => setLabResult(e.target.value)} /></Field>
-        <Field label="Peer group mean"><input type="number" step="any" className={inputCls} style={inputStyle} value={peerMean} onChange={e => setPeerMean(e.target.value)} /></Field>
-        <Field label="Peer group SD"><input type="number" step="any" className={inputCls} style={inputStyle} value={peerSD} onChange={e => setPeerSD(e.target.value)} /></Field>
+        <Field label="Next cycle due (optional)"><input type="date" className={inputCls} style={inputStyle} value={nextCycleDate} onChange={e => setNextCycleDate(e.target.value)} /></Field>
       </div>
+
+      {mode === "single" ? (
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Parameter"><input className={inputCls} style={inputStyle} value={parameter} onChange={e => setParameter(e.target.value)} placeholder="e.g. Hemoglobin, Glucose, TSH" /></Field>
+          <Field label="Lab result"><input type="number" step="any" className={inputCls} style={inputStyle} value={labResult} onChange={e => setLabResult(e.target.value)} /></Field>
+          <Field label="Peer group mean"><input type="number" step="any" className={inputCls} style={inputStyle} value={peerMean} onChange={e => setPeerMean(e.target.value)} /></Field>
+          <Field label="Peer group SD"><input type="number" step="any" className={inputCls} style={inputStyle} value={peerSD} onChange={e => setPeerSD(e.target.value)} /></Field>
+        </div>
+      ) : (
+        <div className="mb-3">
+          <div className="text-xs font-medium text-gray-500 mb-1">Analytes in this panel</div>
+          {rows.map((r, i) => (
+            <div key={i} className="grid grid-cols-5 gap-2 mb-1.5 items-center">
+              <input className={inputCls} style={inputStyle} value={r.parameter} onChange={e => updateRow(i, { parameter: e.target.value })} placeholder="Analyte" />
+              <input type="number" step="any" className={inputCls} style={inputStyle} value={r.labResult} onChange={e => updateRow(i, { labResult: e.target.value })} placeholder="Lab result" />
+              <input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerMean} onChange={e => updateRow(i, { peerMean: e.target.value })} placeholder="Peer mean" />
+              <input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerSD} onChange={e => updateRow(i, { peerSD: e.target.value })} placeholder="Peer SD" />
+              <button onClick={() => removeRow(i)} disabled={rows.length === 1} className="text-gray-300 hover:text-red-500 disabled:opacity-30"><Trash2 size={14} /></button>
+            </div>
+          ))}
+          <button onClick={addRow} className="text-xs flex items-center gap-1 mt-1" style={{ color: COLORS.teal }}><Plus size={12} /> Add another analyte</button>
+        </div>
+      )}
+
       <Field label="Notes"><textarea className={inputCls} style={inputStyle} rows={2} value={notes} onChange={e => setNotes(e.target.value)} placeholder="Corrective action reference, comments…" /></Field>
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button onClick={() => parameter.trim() && labResult !== "" && onSave({ discipline, machineId, parameter, provider, cycle, dateReceived, labResult, peerMean, peerSD, notes })}
-          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Save EQA result</button>
+        <button onClick={handleSave}
+          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Save {mode === "batch" ? `${rows.filter(r => r.parameter.trim() && r.labResult !== "").length} result(s)` : "EQA result"}</button>
       </div>
     </div>
   );
