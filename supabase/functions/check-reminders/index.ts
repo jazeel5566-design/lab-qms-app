@@ -41,7 +41,11 @@ serve(async () => {
   let overdueNotified = 0;
   let cyclesNotified = 0;
 
+  const { data: settingsRows } = await supabase.from("notification_settings").select("event_key, enabled");
+  const isEnabled = (key: string) => settingsRows?.find(s => s.event_key === key)?.enabled !== false; // defaults to enabled if the row is somehow missing
+
   // ---------- Overdue tasks ----------
+  if (isEnabled("task_overdue")) {
   const { data: overdueTasks } = await supabase
     .from("tasks")
     .select("id, title, due_date, assigned_to")
@@ -63,8 +67,10 @@ serve(async () => {
     }
     await supabase.from("tasks").update({ overdue_notified_at: new Date().toISOString() }).eq("id", t.id);
   }
+  }
 
   // ---------- EQA cycles due within 7 days (or already overdue) ----------
+  if (isEnabled("eqa_cycle_due")) {
   const { data: eqaEvents } = await supabase
     .from("eqa_events")
     .select("id, parameter, next_cycle_date, date_received")
@@ -96,6 +102,7 @@ serve(async () => {
     }
     await supabase.from("eqa_events").update({ cycle_reminder_sent_at: new Date().toISOString() }).eq("id", e.id);
     cyclesNotified++;
+  }
   }
 
   return new Response(

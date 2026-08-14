@@ -29,6 +29,8 @@ import * as clauseEvidenceApi from "./api/clauseEvidence.js";
 import * as taskCommentsApi from "./api/taskComments.js";
 import * as taskTemplatesApi from "./api/taskTemplates.js";
 import * as notificationsApi from "./api/notifications.js";
+import * as machineKeysApi from "./api/machineKeys.js";
+import * as notificationSettingsApi from "./api/notificationSettings.js";
 import * as auditApi from "./api/auditAndBackup.js";
 import {
   syncList, syncClauseStatus, nameToId, idToName, rowToClauseStatus,
@@ -185,6 +187,13 @@ const ROLE_DESC = {
   Viewer: "Read-only access to all modules.",
 };
 const TASK_ASSIGNER_ROLES = ["Admin", "Deputy Admin", "QA Manager", "Deputy QA Manager"];
+const NOTIFICATION_EVENT_LABELS = [
+  { key: "task_assigned", label: "A task is assigned to someone" },
+  { key: "task_overdue", label: "A task becomes overdue (checked daily)" },
+  { key: "nc_assigned", label: "An NC is assigned to someone" },
+  { key: "document_published", label: "A controlled document is published" },
+  { key: "eqa_cycle_due", label: "An EQA cycle is coming due (checked daily)" },
+];
 const DOCUMENT_PUBLISHER_ROLES = ["Admin", "QA Manager", "Deputy QA Manager"];
 const CONTROLLED_DOCUMENT_CATEGORIES = ["SOP", "QSP", "Policy", "Manual"];
 const PERSONAL_DOCUMENT_CATEGORIES = ["Professional licence / registration", "Certification", "Other personal document"];
@@ -339,6 +348,7 @@ export default function App() {
   const [clauseEvidence, setClauseEvidence] = useState([]);
   const [taskComments, setTaskComments] = useState([]);
   const [taskTemplates, setTaskTemplates] = useState([]);
+  const [notificationSettings, setNotificationSettings] = useState({});
 
   // Runs exactly once, on first load: is there already a signed-in session
   // (e.g. a returning visitor)? Deliberately does NOT fetch any app data here —
@@ -372,7 +382,7 @@ export default function App() {
         const p = pRows.map(personnelFromDb);
         setPersonnel(p);
 
-        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows, ttRows] = await Promise.all([
+        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows] = await Promise.all([
           clauseApi.listClauseStatus(),
           taskApi.listTasks(),
           ncApi.listNonconformities(),
@@ -392,6 +402,7 @@ export default function App() {
           clauseEvidenceApi.listClauseEvidence(),
           taskCommentsApi.listTaskComments(),
           taskTemplatesApi.listTaskTemplates(),
+          notificationSettingsApi.listNotificationSettings(),
         ]);
 
         const cs = {};
@@ -417,6 +428,7 @@ export default function App() {
         setClauseEvidence(ceRows.map(r => clauseEvidenceFromDb(r, p)));
         setTaskComments(tcRows.map(r => taskCommentFromDb(r, p)));
         setTaskTemplates(ttRows.map(r => taskTemplateFromDb(r, p)));
+        setNotificationSettings(Object.fromEntries(nsRows.map(r => [r.event_key, r.enabled])));
       } catch (err) {
         console.error("Failed to load data from Supabase:", err);
       } finally {
@@ -768,12 +780,14 @@ export default function App() {
       ...prev.map(d => (d.documentCode && d.documentCode === mapped.documentCode ? { ...d, isCurrent: false } : d)),
     ]);
     // Everyone needs to acknowledge a newly published/updated controlled document — notify anyone with an email on file.
-    personnel.forEach(p => {
-      if (p.email) {
-        notificationsApi.sendNotificationEmail(p.email, `New document published: ${mapped.title}`,
-          `<p>Hi ${p.name},</p><p>A new version of "<strong>${mapped.title}</strong>"${mapped.documentCode ? ` (${mapped.documentCode})` : ""} has just been published and needs your acknowledgment in Lab QMS.</p>`);
-      }
-    });
+    if (notificationSettings.document_published !== false) {
+      personnel.forEach(p => {
+        if (p.email) {
+          notificationsApi.sendNotificationEmail(p.email, `New document published: ${mapped.title}`,
+            `<p>Hi ${p.name},</p><p>A new version of "<strong>${mapped.title}</strong>"${mapped.documentCode ? ` (${mapped.documentCode})` : ""} has just been published and needs your acknowledgment in Lab QMS.</p>`);
+        }
+      });
+    }
     return mapped;
   };
 
@@ -879,6 +893,7 @@ export default function App() {
     { id: "personnel", label: "Personnel", icon: Users },
     ...(canSeeAuditBackup ? [{ id: "mgmtreview", label: "Management review", icon: CheckCircle2 }] : []),
     ...(canSeeAuditBackup ? [{ id: "audit", label: "Audit & Backup", icon: History }] : []),
+    ...(isAdmin ? [{ id: "settings", label: "Settings", icon: KeyRound }] : []),
     { id: "manual", label: "User Manual", icon: BookOpen, href: "/Lab-QMS-User-Manual.pdf" },
   ];
 
@@ -945,8 +960,9 @@ export default function App() {
         {tab === "tasks" && <Tasks tasks={tasks} updateTasks={updateTasks} setTaskStatusAction={setTaskStatusAction} approveTaskCompletionAction={approveTaskCompletionAction}
           personnel={personnel} canEdit={canEdit} canAssignTasks={canAssignTasks} taskComments={taskComments} currentUser={currentUser}
           addTaskCommentAction={addTaskCommentAction} deleteTaskCommentAction={deleteTaskCommentAction}
-          taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction} />}
-        {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} />}
+          taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction}
+          notificationSettings={notificationSettings} />}
+        {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} notificationSettings={notificationSettings} />}
         {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} />}
         {tab === "iqc" && <IQCPage qcMachines={qcMachines} updateQcMachines={updateQcMachines}
           qcParameters={qcParameters} updateQcParameters={updateQcParameters}
@@ -969,6 +985,7 @@ export default function App() {
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} addManagementReview={addManagementReview}
           deleteManagementReview={deleteManagementReview} stats={stats} currentUser={currentUser} />}
         {tab === "audit" && canSeeAuditBackup && <AuditBackup />}
+        {tab === "settings" && isAdmin && <Settings qcMachines={qcMachines} currentUser={currentUser} />}
       </div>
     </div>
   );
@@ -1352,6 +1369,7 @@ function MiniTaskForm({ personnel, onSave, onCancel }) {
   const [title, setTitle] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [dueTime, setDueTime] = useState("");
   const [priority, setPriority] = useState("Medium");
   return (
     <div className="mt-3 p-3 rounded-md" style={{ background: COLORS.mint }}>
@@ -1363,13 +1381,14 @@ function MiniTaskForm({ personnel, onSave, onCancel }) {
           {personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
         </select>
         <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }} />
+        <input type="time" value={dueTime} onChange={e => setDueTime(e.target.value)} disabled={!dueDate} title="Optional — time of day this is due" className="text-xs border rounded-md px-2 py-1 w-24 disabled:opacity-40" style={{ borderColor: "#D8E5E1" }} />
         <select value={priority} onChange={e => setPriority(e.target.value)} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
           <option>Low</option><option>Medium</option><option>High</option>
         </select>
       </div>
       <div className="flex gap-2 justify-end">
         <button onClick={onCancel} className="text-xs px-3 py-1 rounded-md text-gray-500">Cancel</button>
-        <button onClick={() => title.trim() && onSave({ title, assignedTo, dueDate, priority })}
+        <button onClick={() => title.trim() && onSave({ title, assignedTo, dueDate, dueTime: dueDate ? dueTime : "", priority })}
           className="text-xs px-3 py-1 rounded-md text-white" style={{ background: COLORS.teal }}>Create task</button>
       </div>
     </div>
@@ -1377,7 +1396,7 @@ function MiniTaskForm({ personnel, onSave, onCancel }) {
 }
 
 // ---------------- Tasks ----------------
-function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks, taskComments, currentUser, addTaskCommentAction, deleteTaskCommentAction, taskTemplates, createTaskTemplateAction, deleteTaskTemplateAction }) {
+function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks, taskComments, currentUser, addTaskCommentAction, deleteTaskCommentAction, taskTemplates, createTaskTemplateAction, deleteTaskTemplateAction, notificationSettings }) {
   const [showForm, setShowForm] = useState(false);
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterAssignee, setFilterAssignee] = useState("All");
@@ -1387,7 +1406,7 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
   const addTask = (draft) => {
     updateTasks([{ id: uid(), ...draft, status: "Open", createdAt: todayISO() }, ...tasks]);
     setShowForm(false);
-    if (draft.assignedTo) {
+    if (draft.assignedTo && notificationSettings.task_assigned !== false) {
       const assignee = personnel.find(p => p.name === draft.assignedTo);
       if (assignee?.email) {
         notificationsApi.sendNotificationEmail(assignee.email, `New task assigned: ${draft.title}`,
@@ -1456,7 +1475,7 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
               <select value={t.status} disabled={!canEdit} onChange={e => setTaskStatusAction(t.id, e.target.value)} className="text-xs border rounded-md px-2 py-1 disabled:opacity-50" style={{ borderColor: "#D8E5E1" }}>
                 {TASK_STATUS.map(s => <option key={s}>{s}</option>)}
               </select>
-              <Badge color={overdue ? COLORS.red : "#9AA5A3"}>{t.dueDate || "no date"}</Badge>
+              <Badge color={overdue ? COLORS.red : "#9AA5A3"}>{t.dueDate ? `${t.dueDate}${t.dueTime ? ` ${t.dueTime}` : ""}` : "no date"}</Badge>
               <Badge color={t.priority === "High" ? COLORS.red : t.priority === "Medium" ? COLORS.amber : "#9AA5A3"}>{t.priority}</Badge>
               <button onClick={() => setCommentsOpenFor(commentsOpenFor === t.id ? null : t.id)} className="text-xs text-gray-400 flex items-center gap-1 whitespace-nowrap">
                 {commentsForTask.length} comment{commentsForTask.length !== 1 ? "s" : ""} {commentsOpenFor === t.id ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -1501,6 +1520,7 @@ function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTempla
   const [title, setTitle] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [dueTime, setDueTime] = useState("");
   const [priority, setPriority] = useState("Medium");
   const [clauseId, setClauseId] = useState("");
   const [isRecurring, setIsRecurring] = useState(false);
@@ -1553,6 +1573,7 @@ function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTempla
           </select>
         </Field>
         <Field label="Due date"><input type="date" className={inputCls} style={inputStyle} value={dueDate} onChange={e => setDueDate(e.target.value)} /></Field>
+        <Field label="Due time (optional)"><input type="time" className={inputCls} style={inputStyle} value={dueTime} onChange={e => setDueTime(e.target.value)} disabled={!dueDate} /></Field>
         <Field label="Priority">
           <select className={inputCls} style={inputStyle} value={priority} onChange={e => setPriority(e.target.value)}>
             <option>Low</option><option>Medium</option><option>High</option>
@@ -1580,7 +1601,7 @@ function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTempla
             createTaskTemplateAction({ title, defaultPriority: priority, defaultClauseId: clauseId, isRecurring, recurrenceIntervalDays: isRecurring ? Number(recurrenceIntervalDays) || 30 : null });
           }
           onSave({
-            title, assignedTo, dueDate, priority, clauseId,
+            title, assignedTo, dueDate, dueTime: dueDate ? dueTime : "", priority, clauseId,
             isRecurring, recurrenceIntervalDays: isRecurring ? Number(recurrenceIntervalDays) || 30 : null,
           });
         }}
@@ -1591,7 +1612,7 @@ function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTempla
 }
 
 // ---------------- NC / CAPA Register ----------------
-function NCRegister({ ncs, updateNcs, personnel, canEdit }) {
+function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings }) {
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [showTrends, setShowTrends] = useState(false);
@@ -1609,7 +1630,7 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit }) {
     };
     updateNcs([nc, ...ncs]);
     setShowForm(false);
-    if (nc.assignedTo) {
+    if (nc.assignedTo && notificationSettings.nc_assigned !== false) {
       const assignee = personnel.find(p => p.name === nc.assignedTo);
       if (assignee?.email) {
         notificationsApi.sendNotificationEmail(assignee.email, `NC assigned to you: ${nc.title}`,
@@ -1872,6 +1893,9 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit }) {
                   <Field label="Target close date">
                     <input type="date" className={inputCls} style={inputStyle} value={n.dueDate || ""} onChange={e => setNc(n.id, { dueDate: e.target.value })} />
                   </Field>
+                  <Field label="Due time (optional)">
+                    <input type="time" className={inputCls} style={inputStyle} value={n.dueTime || ""} onChange={e => setNc(n.id, { dueTime: e.target.value })} disabled={!n.dueDate} />
+                  </Field>
                   <Field label="Root cause analysis">
                     <textarea className={inputCls} style={inputStyle} rows={2} value={n.rootCause} onChange={e => setNc(n.id, { rootCause: e.target.value })} />
                   </Field>
@@ -1972,6 +1996,7 @@ function NcForm({ personnel, existingNcs, onCancel, onSave }) {
   const [source, setSource] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [dueDate, setDueDate] = useState("");
+  const [dueTime, setDueTime] = useState("");
   const [raisedBy, setRaisedBy] = useState("");
   const [relatedNcId, setRelatedNcId] = useState("");
 
@@ -2035,10 +2060,11 @@ function NcForm({ personnel, existingNcs, onCancel, onSave }) {
           </select>
         </Field>
         <Field label="Target close date"><input type="date" className={inputCls} style={inputStyle} value={dueDate} onChange={e => setDueDate(e.target.value)} /></Field>
+        <Field label="Due time (optional)"><input type="time" className={inputCls} style={inputStyle} value={dueTime} onChange={e => setDueTime(e.target.value)} disabled={!dueDate} /></Field>
       </div>
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button onClick={() => title.trim() && onSave({ title, description, clauseId, severity, source, assignedTo, dueDate, raisedBy, relatedNcId })}
+        <button onClick={() => title.trim() && onSave({ title, description, clauseId, severity, source, assignedTo, dueDate, dueTime: dueDate ? dueTime : "", raisedBy, relatedNcId })}
           className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Log nonconformity</button>
       </div>
     </div>
@@ -2055,6 +2081,22 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
   const [accessRole, setAccessRole] = useState("Technologist");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
+  const [rowDrafts, setRowDrafts] = useState({}); // { [personnelId]: { role?, email?, recordCardNumber?, accessRole? } } — only fields with a pending, unsaved edit
+  const [savingRow, setSavingRow] = useState(null);
+
+  const editRow = (id, patch) => setRowDrafts(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+  const valueFor = (p, field) => rowDrafts[p.id]?.[field] !== undefined ? rowDrafts[p.id][field] : (p[field] ?? "");
+  const saveRow = async (p) => {
+    const draft = rowDrafts[p.id];
+    if (!draft) return;
+    setSavingRow(p.id);
+    try {
+      await updatePersonnel(personnel.map(x => x.id === p.id ? { ...x, ...draft } : x));
+      setRowDrafts(prev => { const next = { ...prev }; delete next[p.id]; return next; });
+    } finally {
+      setSavingRow(null);
+    }
+  };
 
   const addPerson = async () => {
     if (!name.trim() || !recordCardNumber.trim() || password.length < 6) {
@@ -2073,7 +2115,6 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
     }
   };
   const removePerson = (id) => updatePersonnel(personnel.filter(p => p.id !== id));
-  const setAccess = (id, patch) => updatePersonnel(personnel.map(p => p.id === id ? { ...p, ...patch } : p));
 
   /**
    * Bulk Excel import: rows with a matching existing ID are treated as
@@ -2175,9 +2216,9 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
               <div className="text-sm">{p.name}{p.id === currentUser?.id ? <span className="text-xs text-gray-400"> (you)</span> : ""}</div>
               {isAdmin ? (
                 <div className="flex gap-2 mt-1">
-                  <input value={p.role || ""} onChange={e => setAccess(p.id, { role: e.target.value })}
+                  <input value={valueFor(p, "role")} onChange={e => editRow(p.id, { role: e.target.value })}
                     placeholder="Job title" className="text-xs border rounded-md px-2 py-1 w-36" style={{ borderColor: "#D8E5E1" }} />
-                  <input value={p.email || ""} onChange={e => setAccess(p.id, { email: e.target.value })}
+                  <input value={valueFor(p, "email")} onChange={e => editRow(p.id, { email: e.target.value })}
                     placeholder="Email" className="text-xs border rounded-md px-2 py-1 w-48" style={{ borderColor: "#D8E5E1" }} />
                 </div>
               ) : (
@@ -2186,11 +2227,17 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
             </div>
             {isAdmin ? (
               <>
-                <input value={p.recordCardNumber || ""} onChange={e => setAccess(p.id, { recordCardNumber: e.target.value })}
+                <input value={valueFor(p, "recordCardNumber")} onChange={e => editRow(p.id, { recordCardNumber: e.target.value })}
                   placeholder="Record card #" className="text-xs border rounded-md px-2 py-1 w-28" style={{ borderColor: "#D8E5E1" }} />
-                <select value={p.accessRole || "Technologist"} onChange={e => setAccess(p.id, { accessRole: e.target.value })} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
+                <select value={valueFor(p, "accessRole") || "Technologist"} onChange={e => editRow(p.id, { accessRole: e.target.value })} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
                   {ROLES.map(r => <option key={r}>{r}</option>)}
                 </select>
+                {rowDrafts[p.id] && (
+                  <button onClick={() => saveRow(p)} disabled={savingRow === p.id}
+                    className="text-xs px-2 py-1 rounded-md text-white disabled:opacity-50 whitespace-nowrap" style={{ background: COLORS.teal }}>
+                    {savingRow === p.id ? "Saving…" : "Save"}
+                  </button>
+                )}
                 <ResetPasswordControl personnelId={p.id} />
               </>
             ) : (
@@ -4930,6 +4977,230 @@ function AuditBackup() {
             <span className="text-gray-500">{a.actor_name}{a.actor_role ? ` (${a.actor_role})` : ""}</span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// ---------------- Settings (Admin only) ----------------
+function Settings({ qcMachines, currentUser }) {
+  const [keys, setKeys] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [label, setLabel] = useState("");
+  const [restrictToMachine, setRestrictToMachine] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [justCreatedKey, setJustCreatedKey] = useState(null); // { plainKey, keyPrefix } — shown once, then discarded
+  const [notifSettings, setNotifSettings] = useState([]);
+  const [notifLoading, setNotifLoading] = useState(true);
+  const [testEmailStatus, setTestEmailStatus] = useState("");
+
+  const iqcEndpointUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-qc-result`;
+  const eqaEndpointUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-eqa-result`;
+
+  const loadNotifSettings = async () => {
+    setNotifLoading(true);
+    try {
+      setNotifSettings(await notificationSettingsApi.listNotificationSettings());
+    } catch (e) {
+      console.error("Could not load notification settings:", e);
+    } finally {
+      setNotifLoading(false);
+    }
+  };
+  useEffect(() => { loadNotifSettings(); }, []);
+
+  const toggleNotif = async (eventKey, currentlyEnabled) => {
+    setNotifSettings(prev => prev.map(s => s.event_key === eventKey ? { ...s, enabled: !currentlyEnabled } : s));
+    try {
+      await notificationSettingsApi.setNotificationEnabled(eventKey, !currentlyEnabled);
+    } catch (e) {
+      alert("Could not update this setting.\n\n" + e.message);
+      loadNotifSettings();
+    }
+  };
+
+  const sendTestEmail = async () => {
+    if (!currentUser?.email) { setTestEmailStatus("Your own account has no email on file — add one on the Personnel page first."); return; }
+    setTestEmailStatus("Sending…");
+    try {
+      await notificationsApi.sendNotificationEmail(currentUser.email, "Lab QMS test email",
+        `<p>Hi ${currentUser.name},</p><p>This is a test email from Lab QMS, sent from Settings to confirm notifications are working.</p>`);
+      setTestEmailStatus(`Sent to ${currentUser.email} — check your inbox (and spam folder) in a minute.`);
+    } catch (e) {
+      setTestEmailStatus("Failed: " + e.message);
+    }
+  };
+
+  const loadKeys = async () => {
+    setLoading(true);
+    try {
+      setKeys(await machineKeysApi.listMachineApiKeys());
+    } catch (e) {
+      console.error("Could not load API keys:", e);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { loadKeys(); }, []);
+
+  const handleCreate = async () => {
+    if (!label.trim()) return;
+    setCreating(true); setCreateError("");
+    try {
+      const result = await machineKeysApi.createMachineApiKey(label.trim(), restrictToMachine);
+      setJustCreatedKey(result);
+      setLabel(""); setRestrictToMachine(""); setShowCreateForm(false);
+      await loadKeys();
+    } catch (e) {
+      setCreateError(e.message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleRevoke = async (id) => {
+    if (!confirm("Revoke this API key? Anything using it to submit QC results will stop working immediately.")) return;
+    try {
+      await machineKeysApi.revokeMachineApiKey(id);
+      await loadKeys();
+    } catch (e) {
+      alert("Could not revoke this key.\n\n" + e.message);
+    }
+  };
+
+  return (
+    <div className="p-8 max-w-4xl">
+      <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Settings</h1>
+      <p className="text-sm text-gray-500 mb-6">Admin-only configuration for Lab QMS.</p>
+
+      <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+        <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Machine data interface (IQC & EQAS)</div>
+        <p className="text-xs text-gray-500 mb-3">
+          A one-way connection: any analyser — not tied to any specific brand or model — or middleware sitting between it and
+          the internet, can push a result directly into Lab QMS using an API key below. Nothing is ever sent back to the
+          machine. What the instrument itself needs, to actually reach these endpoints, depends on that specific machine —
+          some can call a web address directly, others need translator/gateway software in between.
+        </p>
+        <div className="p-3 rounded-md text-xs mb-4" style={{ background: COLORS.mint }}>
+          <div className="font-medium mb-1" style={{ color: COLORS.navy }}>IQC endpoint</div>
+          <code className="block mb-2 break-all">{iqcEndpointUrl}</code>
+          <div className="font-medium mb-1" style={{ color: COLORS.navy }}>JSON body</div>
+          <pre className="whitespace-pre-wrap mb-2">{`{
+  "machineName": "exact QC machine name in Lab QMS",
+  "parameter": "exact parameter name",
+  "level": "Level 1 (Low)" | "Level 2 (Normal)" | "Level 3 (High)",
+  "lotNumber": "optional, disambiguates if needed",
+  "value": 5.4,
+  "date": "optional, defaults to today",
+  "time": "optional"
+}`}</pre>
+          <div className="font-medium mb-1" style={{ color: COLORS.navy }}>EQAS endpoint</div>
+          <code className="block mb-2 break-all">{eqaEndpointUrl}</code>
+          <div className="font-medium mb-1" style={{ color: COLORS.navy }}>JSON body</div>
+          <pre className="whitespace-pre-wrap">{`{
+  "discipline": "Hematology" | "Biochemistry" | "Immunochemistry",
+  "machineName": "optional",
+  "parameter": "e.g. Hemoglobin",
+  "provider": "optional, e.g. RIQAS",
+  "cycle": "optional, e.g. 2026 Round 4",
+  "labResult": 12.4,
+  "peerMean": 12.6,
+  "peerSD": 0.5,
+  "dateReceived": "optional, defaults to today"
+}`}</pre>
+          <div className="text-[11px] text-gray-500 mt-2">
+            Both: header <code>X-API-Key: (your key)</code>, method POST. Machine/parameter/level/lot names must exactly match what's already
+            set up in Lab QMS — nothing is ever auto-created. peerMean/peerSD for EQAS are optional — if omitted, the result is stored
+            for someone to complete once the provider's report arrives. Every result, from either endpoint, arrives requiring the same
+            human review as manual entry — this interface never bypasses that.
+          </div>
+        </div>
+
+        {justCreatedKey && (
+          <div className="p-3 rounded-md mb-4 border" style={{ borderColor: COLORS.amber, background: "#FFFBEB" }}>
+            <div className="text-xs font-semibold mb-1" style={{ color: COLORS.amber }}>Copy this key now — it will never be shown again</div>
+            <code className="block text-sm font-mono break-all mb-2">{justCreatedKey.plainKey}</code>
+            <button onClick={() => { navigator.clipboard?.writeText(justCreatedKey.plainKey); }} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>Copy</button>
+            <button onClick={() => setJustCreatedKey(null)} className="text-xs px-2 py-1 rounded-md text-gray-400 ml-2">Dismiss</button>
+          </div>
+        )}
+
+        <button onClick={() => setShowCreateForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white mb-3" style={{ background: COLORS.teal }}>
+          <Plus size={14} /> Generate new API key
+        </button>
+        {showCreateForm && (
+          <div className="border rounded-md p-3 mb-4" style={{ borderColor: "#EEF3F1" }}>
+            <div className="grid grid-cols-2 gap-3 mb-2">
+              <Field label="Label"><input className={inputCls} style={inputStyle} value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Ozelle EHBT-75 QC feed" /></Field>
+              <Field label="Restrict to one machine (optional)">
+                <select className={inputCls} style={inputStyle} value={restrictToMachine} onChange={e => setRestrictToMachine(e.target.value)}>
+                  <option value="">Any machine</option>
+                  {qcMachines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </Field>
+            </div>
+            {createError && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{createError}</div>}
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setShowCreateForm(false)} className="text-xs px-3 py-1.5 text-gray-500">Cancel</button>
+              <button disabled={creating} onClick={handleCreate} className="text-xs px-3 py-1.5 rounded-md text-white disabled:opacity-50" style={{ background: COLORS.teal }}>
+                {creating ? "Generating…" : "Generate key"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="border rounded-md divide-y" style={{ borderColor: "#EEF3F1" }}>
+          {loading && <div className="text-xs text-gray-400 px-3 py-3">Loading…</div>}
+          {!loading && keys.length === 0 && <div className="text-xs text-gray-400 px-3 py-3">No API keys yet.</div>}
+          {!loading && keys.map(k => {
+            const machine = qcMachines.find(m => m.id === k.qc_machine_id);
+            return (
+              <div key={k.id} className="px-3 py-2 flex items-center justify-between">
+                <div>
+                  <div className="text-sm">{k.label} <span className="text-xs text-gray-400 font-mono">({k.key_prefix}…)</span></div>
+                  <div className="text-xs text-gray-400">
+                    {machine ? `Restricted to ${machine.name}` : "Any machine"} · created {k.created_at.slice(0, 10)}
+                    {k.last_used_at ? ` · last used ${k.last_used_at.slice(0, 10)}` : " · never used"}
+                    {k.revoked_at ? " · " : ""}{k.revoked_at && <span style={{ color: COLORS.red }}>revoked {k.revoked_at.slice(0, 10)}</span>}
+                  </div>
+                </div>
+                {!k.revoked_at && <button onClick={() => handleRevoke(k.id)} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.red, color: COLORS.red }}>Revoke</button>}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+        <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Email notifications</div>
+        <p className="text-xs text-gray-500 mb-3">
+          Turn individual notification emails on or off. The actual sending account (Resend, and its API key) is configured
+          separately as a Supabase secret, deliberately outside the app itself — a key that could be read or changed from
+          this page would defeat the purpose of keeping it secret in the first place.
+        </p>
+        <div className="border rounded-md divide-y mb-4" style={{ borderColor: "#EEF3F1" }}>
+          {notifLoading && <div className="text-xs text-gray-400 px-3 py-3">Loading…</div>}
+          {!notifLoading && NOTIFICATION_EVENT_LABELS.map(({ key, label: eventLabel }) => {
+            const row = notifSettings.find(s => s.event_key === key);
+            const enabled = row?.enabled !== false;
+            return (
+              <div key={key} className="px-3 py-2 flex items-center justify-between">
+                <span className="text-sm">{eventLabel}</span>
+                <button onClick={() => toggleNotif(key, enabled)}
+                  className="text-xs px-3 py-1 rounded-full"
+                  style={{ background: enabled ? COLORS.teal : "#E1EBE8", color: enabled ? "white" : "#9AA5A3" }}>
+                  {enabled ? "On" : "Off"}
+                </button>
+              </div>
+            );
+          })}
+        </div>
+        <button onClick={sendTestEmail} className="text-sm px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+          Send test email to myself
+        </button>
+        {testEmailStatus && <div className="text-xs mt-2 text-gray-500">{testEmailStatus}</div>}
       </div>
     </div>
   );
