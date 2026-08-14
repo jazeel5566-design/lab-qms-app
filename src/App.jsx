@@ -4995,6 +4995,23 @@ function Settings({ qcMachines, currentUser }) {
   const [notifSettings, setNotifSettings] = useState([]);
   const [notifLoading, setNotifLoading] = useState(true);
   const [testEmailStatus, setTestEmailStatus] = useState("");
+  const [resendStatus, setResendStatus] = useState(null);
+  const [resendStatusLoading, setResendStatusLoading] = useState(true);
+  const [showSetupChecklist, setShowSetupChecklist] = useState(false);
+
+  const checkResendStatus = async () => {
+    setResendStatusLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke("check-resend-status");
+      if (error) throw error;
+      setResendStatus(data);
+    } catch (e) {
+      setResendStatus({ configured: false, reason: e.message });
+    } finally {
+      setResendStatusLoading(false);
+    }
+  };
+  useEffect(() => { checkResendStatus(); }, []);
 
   const iqcEndpointUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-qc-result`;
   const eqaEndpointUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-eqa-result`;
@@ -5170,6 +5187,52 @@ function Settings({ qcMachines, currentUser }) {
               </div>
             );
           })}
+        </div>
+      </div>
+
+      <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+        <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Email sending status</div>
+        <p className="text-xs text-gray-500 mb-3">
+          Live check against Resend's own records — this can only look, never change anything on Resend or your domain registrar.
+        </p>
+        {resendStatusLoading ? (
+          <div className="text-xs text-gray-400">Checking…</div>
+        ) : !resendStatus?.configured ? (
+          <div className="p-3 rounded-md text-xs" style={{ background: "#FEF2F2", color: COLORS.red }}>
+            Not working: {resendStatus?.reason || "unknown reason"}
+          </div>
+        ) : resendStatus.domains.length === 0 ? (
+          <div className="p-3 rounded-md text-xs" style={{ background: "#FEF2F2", color: COLORS.red }}>
+            API key is valid, but no sending domain has been added in Resend yet.
+          </div>
+        ) : (
+          <div className="border rounded-md divide-y" style={{ borderColor: "#EEF3F1" }}>
+            {resendStatus.domains.map(d => (
+              <div key={d.name} className="px-3 py-2 flex items-center justify-between text-xs">
+                <span>{d.name}</span>
+                <Badge color={d.status === "verified" ? COLORS.teal : COLORS.amber}>{d.status}</Badge>
+              </div>
+            ))}
+          </div>
+        )}
+        <button onClick={checkResendStatus} className="text-xs text-gray-400 underline mt-2">Re-check now</button>
+
+        <div className="mt-4 pt-4 border-t" style={{ borderColor: "#EEF3F1" }}>
+          <button onClick={() => setShowSetupChecklist(v => !v)} className="text-xs underline" style={{ color: COLORS.teal }}>
+            {showSetupChecklist ? "Hide" : "Show"} setup reference (domain, DNS, API key — done outside this app)
+          </button>
+          {showSetupChecklist && (
+            <div className="text-xs text-gray-600 mt-2 space-y-1.5">
+              <p><strong>These steps happen on Cloudflare and Resend directly, not in Lab QMS</strong> — this app has no login access to either, by design.</p>
+              <p>1. Register a domain (e.g. Cloudflare Registrar).</p>
+              <p>2. In Resend → Domains → Add Domain → use a subdomain like <code>notify.yourdomain.com</code>.</p>
+              <p>3. Copy the DNS records Resend shows, add them at your registrar's DNS settings.</p>
+              <p>4. In Resend, click Verify — check the status above once it's done.</p>
+              <p>5. Generate an API key in Resend → API Keys.</p>
+              <p>6. From Terminal, in the project folder: <code>supabase secrets set RESEND_API_KEY=your_key</code> — this is the only step that connects Resend to this app.</p>
+              <p>7. If the key is ever regenerated, only step 6 needs repeating.</p>
+            </div>
+          )}
         </div>
       </div>
 
