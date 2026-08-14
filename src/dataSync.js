@@ -319,6 +319,8 @@ export const equipmentRecordFromDb = (row, personnel) => ({
   result: row.result || "",
   documentRef: row.document_ref || "",
   notes: row.notes || "",
+  url: row.url || "",
+  storagePath: row.storage_path || "",
 });
 export const equipmentRecordToDb = (r, personnel) => ({
   equipment_id: r.equipmentId,
@@ -329,6 +331,8 @@ export const equipmentRecordToDb = (r, personnel) => ({
   result: r.result || null,
   document_ref: r.documentRef || null,
   notes: r.notes || null,
+  url: r.url || null,
+  storage_path: r.storagePath || null,
 });
 
 // ---------------- qc_machines / qc_parameters / qc_controls ----------------

@@ -545,7 +545,8 @@ export default function App() {
   });
 
   /** One click to raise an NC directly from an Unsatisfactory EQA result, pre-filled — and records the link back on the EQA row so it's never accidentally raised twice. */
-  const createNcFromEqaAction = (eqaEvent) => {
+  /** One click to raise an NC directly from an Unsatisfactory EQA result, pre-filled — and records the link back on the EQA row so it's never accidentally raised twice. Awaits the NC's creation before linking it, so the link is never attempted against an NC that doesn't exist in the database yet. */
+  const createNcFromEqaAction = async (eqaEvent) => {
     const ncNumber = `NC-${String(ncs.length + 1).padStart(3, "0")}`;
     const sdiText = (eqaEvent.sdi !== null && eqaEvent.sdi !== undefined) ? Number(eqaEvent.sdi).toFixed(2) : "n/a";
     const newNc = {
@@ -556,8 +557,8 @@ export default function App() {
       rootCause: "", correctiveAction: "", preventiveAction: "", evidence: "", verifiedBy: "", closedDate: "",
       effectivenessCheckDue: "", effectivenessCheckResult: "", effectivenessNotes: "", effectivenessVerifiedBy: "",
     };
-    updateNcs([newNc, ...ncs]);
-    updateEqaEvents(eqaEvents.map(e => e.id === eqaEvent.id ? { ...e, linkedNcId: newNc.id } : e));
+    await updateNcs([newNc, ...ncs]);
+    await updateEqaEvents(eqaEvents.map(e => e.id === eqaEvent.id ? { ...e, linkedNcId: newNc.id } : e));
   };
 
   const updateDocuments = makeListUpdater(setDocuments, () => documents, (d) => documentToDb(d, personnel), (r) => documentFromDb(r, personnel), {
@@ -2670,6 +2671,7 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
                           <div className="flex-1">
                             <div className="text-xs">{r.date} · {r.performedBy || "unassigned"}{r.documentRef ? ` · Ref: ${r.documentRef}` : ""}</div>
                             {r.notes && <div className="text-xs text-gray-400">{r.notes}</div>}
+                            {(r.url || r.storagePath) && <DocumentLink title="View evidence" url={r.url} storagePath={r.storagePath} className="text-xs underline" />}
                           </div>
                           {r.result && <Badge color={r.result === "Fail" ? COLORS.red : r.result === "Conditional pass" ? COLORS.amber : COLORS.teal}>{r.result}</Badge>}
                           {rds && <Badge color={rds.color}>{rds.label === "OK" ? `Due ${r.dueDate}` : `${rds.label} ${r.dueDate}`}</Badge>}
@@ -2782,6 +2784,27 @@ function EquipmentRecordForm({ personnel, onSave, onCancel }) {
   const [result, setResult] = useState("");
   const [documentRef, setDocumentRef] = useState("");
   const [notes, setNotes] = useState("");
+  const [mode, setMode] = useState("upload"); // "upload" | "link" | "none"
+  const [url, setUrl] = useState("");
+  const [file, setFile] = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState("");
+
+  const handleSave = async () => {
+    setUploadError("");
+    setUploading(true);
+    try {
+      let storagePath = "";
+      if (mode === "upload" && file) {
+        storagePath = await storageApi.uploadDocumentFile(file, "equipment");
+      }
+      onSave({ type, date, performedBy, dueDate, result, documentRef, notes, url: mode === "link" ? url : "", storagePath });
+    } catch (e) {
+      setUploadError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
 
   return (
     <div className="mb-3 p-3 rounded-md" style={{ background: COLORS.mint }}>
@@ -2797,13 +2820,24 @@ function EquipmentRecordForm({ personnel, onSave, onCancel }) {
         <select value={result} onChange={e => setResult(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
           <option value="">Result…</option>{RECORD_RESULT.map(r => <option key={r}>{r}</option>)}
         </select>
-        <input value={documentRef} onChange={e => setDocumentRef(e.target.value)} placeholder="Document / certificate ref." className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
+        <input value={documentRef} onChange={e => setDocumentRef(e.target.value)} placeholder="Reference note (e.g. Certificate #1234)" className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
+      </div>
+      <div className="mb-2">
+        <div className="text-[11px] font-medium text-gray-500 mb-1">Evidence file (optional)</div>
+        <div className="flex gap-2 mb-1.5">
+          <button type="button" onClick={() => setMode("upload")} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: mode === "upload" ? COLORS.teal : "#D8E5E1", color: mode === "upload" ? COLORS.teal : "#9AA5A3", background: mode === "upload" ? "white" : "white" }}>Upload file</button>
+          <button type="button" onClick={() => setMode("link")} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: mode === "link" ? COLORS.teal : "#D8E5E1", color: mode === "link" ? COLORS.teal : "#9AA5A3", background: "white" }}>Link instead</button>
+          <button type="button" onClick={() => setMode("none")} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: mode === "none" ? COLORS.teal : "#D8E5E1", color: mode === "none" ? COLORS.teal : "#9AA5A3", background: "white" }}>None</button>
+        </div>
+        {mode === "upload" && <input type="file" onChange={e => setFile(e.target.files[0] || null)} className="text-xs" />}
+        {mode === "link" && <input value={url} onChange={e => setUrl(e.target.value)} placeholder="https://…" className="text-xs border rounded-md px-2 py-1.5 w-full" style={{ borderColor: "#D8E5E1" }} />}
       </div>
       <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Notes…" rows={2} className="w-full text-xs border rounded-md px-2 py-1.5 mb-2" style={{ borderColor: "#D8E5E1" }} />
+      {uploadError && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{uploadError}</div>}
       <div className="flex justify-end gap-2">
         <button onClick={onCancel} className="text-xs px-3 py-1 rounded-md text-gray-500">Cancel</button>
-        <button onClick={() => onSave({ type, date, performedBy, dueDate, result, documentRef, notes })}
-          className="text-xs px-3 py-1 rounded-md text-white" style={{ background: COLORS.teal }}>Save record</button>
+        <button disabled={uploading} onClick={handleSave}
+          className="text-xs px-3 py-1 rounded-md text-white disabled:opacity-50" style={{ background: COLORS.teal }}>{uploading ? "Saving…" : "Save record"}</button>
       </div>
     </div>
   );
