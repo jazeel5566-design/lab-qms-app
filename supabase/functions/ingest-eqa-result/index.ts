@@ -98,7 +98,9 @@ serve(async (req) => {
       lab_result: labResult,
       peer_mean: hasPeerStats ? peerMean : null,
       peer_sd: hasPeerStats ? peerSD : null,
-      sdi,
+      // sdi is NOT set here — it's a generated column the database computes
+      // automatically from lab_result/peer_mean/peer_sd. Postgres rejects
+      // any attempt to write to it directly, even with the correct value.
       evaluation,
       notes: `Received via machine interface (key: ${keyRow.label})`,
     })
