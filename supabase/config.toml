@@ -1,0 +1,5 @@
+[functions.ingest-qc-result]
+verify_jwt = false
+
+[functions.ingest-eqa-result]
+verify_jwt = false
