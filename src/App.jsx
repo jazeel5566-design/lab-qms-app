@@ -2839,7 +2839,7 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
                         <div key={r.id} className="px-3 py-2 flex items-center gap-3">
                           <Badge color={COLORS.navy}>{r.type}</Badge>
                           <div className="flex-1">
-                            <div className="text-xs">{r.date} · {r.performedBy || "unassigned"}{r.documentRef ? ` · Ref: ${r.documentRef}` : ""}</div>
+                            <div className="text-xs">{r.date} · {r.performedByExternal || r.performedBy || "unassigned"}{r.performedByExternal ? " (external)" : ""}{r.documentRef ? ` · Ref: ${r.documentRef}` : ""}</div>
                             {r.notes && <div className="text-xs text-gray-400">{r.notes}</div>}
                             {(r.url || r.storagePath) && <DocumentLink title="View evidence" url={r.url} storagePath={r.storagePath} className="text-xs underline" />}
                           </div>
@@ -2950,6 +2950,7 @@ function EquipmentRecordForm({ personnel, onSave, onCancel }) {
   const [type, setType] = useState(EQUIPMENT_RECORD_TYPES[0]);
   const [date, setDate] = useState(todayISO());
   const [performedBy, setPerformedBy] = useState("");
+  const [performedByExternal, setPerformedByExternal] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [result, setResult] = useState("");
   const [documentRef, setDocumentRef] = useState("");
@@ -2968,7 +2969,7 @@ function EquipmentRecordForm({ personnel, onSave, onCancel }) {
       if (mode === "upload" && file) {
         storagePath = await storageApi.uploadDocumentFile(file, "equipment");
       }
-      onSave({ type, date, performedBy, dueDate, result, documentRef, notes, url: mode === "link" ? url : "", storagePath });
+      onSave({ type, date, performedBy, performedByExternal: performedByExternal.trim(), dueDate, result, documentRef, notes, url: mode === "link" ? url : "", storagePath });
     } catch (e) {
       setUploadError(e.message);
     } finally {
@@ -2982,9 +2983,19 @@ function EquipmentRecordForm({ personnel, onSave, onCancel }) {
         <select value={type} onChange={e => setType(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
           {EQUIPMENT_RECORD_TYPES.map(t => <option key={t}>{t}</option>)}
         </select>
-        <select value={performedBy} onChange={e => setPerformedBy(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
-          <option value="">Performed by…</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-        </select>
+        <div>
+          <select value={performedByExternal ? "__external__" : performedBy}
+            onChange={e => { if (e.target.value === "__external__") { setPerformedByExternal(" "); setPerformedBy(""); } else { setPerformedByExternal(""); setPerformedBy(e.target.value); } }}
+            className="text-xs border rounded-md px-2 py-1.5 w-full" style={{ borderColor: "#D8E5E1" }}>
+            <option value="">Performed by…</option>
+            {personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+            <option value="__external__">External / not in this system…</option>
+          </select>
+          {performedByExternal !== "" && (
+            <input value={performedByExternal.trim() === "" ? "" : performedByExternal} onChange={e => setPerformedByExternal(e.target.value)}
+              placeholder="e.g. John Smith — Ozelle Field Engineer" className="text-xs border rounded-md px-2 py-1.5 w-full mt-1" style={{ borderColor: "#D8E5E1" }} />
+          )}
+        </div>
         <input type="date" value={date} onChange={e => setDate(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} title="Date performed" />
         <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} title="Next due date" />
         <select value={result} onChange={e => setResult(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>

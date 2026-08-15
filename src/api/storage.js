@@ -21,7 +21,7 @@ export async function uploadDocumentFile(file, folder) {
  * wants to open one. Defaults to a 1-hour expiry.
  */
 export async function getSignedDocumentUrl(path, expiresInSeconds = 3600) {
-  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, expiresInSeconds);
+  const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(path, expiresInSeconds, { download: false });
   if (error) throw new Error(error.message);
   return data.signedUrl;
 }
