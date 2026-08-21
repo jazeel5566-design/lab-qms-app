@@ -465,9 +465,16 @@ export default function App() {
         setPersonnelLaboratories(pls);
 
         const myPersonnel = p.find(person => person.id === currentUser.id || person.name === currentUser.name);
+        // A user's accessible labs = their PRIMARY lab (personnel.laboratory_id) plus any
+        // EXTRA labs assigned via personnel_laboratories (e.g. a QA Manager covering more
+        // than one department). Checking personnel_laboratories alone was missing every
+        // user's primary lab, since a primary assignment isn't duplicated into that table.
         const accessibleLabs = currentUser.role === "Admin"
           ? labs
-          : labs.filter(lab => pls.some(pl => pl.laboratoryId === lab.id && pl.personnelId === myPersonnel?.id));
+          : labs.filter(lab =>
+              lab.id === myPersonnel?.laboratoryId ||
+              pls.some(pl => pl.laboratoryId === lab.id && pl.personnelId === myPersonnel?.id)
+            );
 
         if (accessibleLabs.length === 1) {
           setActiveLaboratoryId(accessibleLabs[0].id);

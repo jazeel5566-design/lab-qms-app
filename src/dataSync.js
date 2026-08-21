@@ -61,6 +61,9 @@ export const personnelFromDb = (row) => ({
   recordCardNumber: row.record_card_number || "",
   password: "",              // never round-tripped — Supabase Auth owns credentials
   accessRole: row.access_role || "Technologist",
+  laboratoryId: row.laboratory_id || null, // primary/default lab (0025) — distinct from
+                                            // personnel_laboratories, which holds any EXTRA
+                                            // labs a user (e.g. QA Manager) can also access
 });
 /** For UPDATING an existing person's non-credential fields only. */
 export const personnelToDb = (p) => ({
