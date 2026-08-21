@@ -80,6 +80,19 @@ export const rowToClauseStatus = (row) => ({
   lastReviewed: row.last_reviewed || "",
   notes: row.notes || "",
   evidenceDocumentId: row.evidence_document_id || "",
+  laboratoryId: row.laboratory_id,
+});
+
+// ---------------- laboratories ----------------
+export const laboratoryFromDb = (row) => ({
+  id: row.id,
+  name: row.name,
+  createdAt: row.created_at,
+});
+export const personnelLabFromDb = (row) => ({
+  id: row.id,
+  personnelId: row.personnel_id,
+  laboratoryId: row.laboratory_id,
 });
 
 // ---------------- clause_evidence (many-to-many clause <-> document) ----------------
@@ -119,6 +132,7 @@ export const taskFromDb = (row, personnel) => ({
   completionApproved: row.completion_approved || false,
   approvedBy: idToName(personnel, row.approved_by),
   approvedAt: row.approved_at || "",
+  laboratoryId: row.laboratory_id,
 });
 export const taskToDb = (t, personnel) => ({
   title: t.title,
@@ -131,6 +145,7 @@ export const taskToDb = (t, personnel) => ({
   is_recurring: t.isRecurring || false,
   recurrence_interval_days: t.recurrenceIntervalDays || null,
   recurrence_parent_id: t.recurrenceParentId || null,
+  laboratory_id: t.laboratoryId,
 });
 
 // ---------------- task_comments ----------------
@@ -180,6 +195,7 @@ export const ncFromDb = (row, personnel) => ({
   effectivenessVerifiedBy: idToName(personnel, row.effectiveness_verified_by),
   effectivenessVerifiedAt: row.effectiveness_verified_at || "",
   relatedNcId: row.related_nc_id || "",
+  laboratoryId: row.laboratory_id,
 });
 export const ncToDb = (n, personnel) => ({
   nc_number: n.ncNumber,
@@ -206,6 +222,7 @@ export const ncToDb = (n, personnel) => ({
   effectiveness_verified_by: nameToId(personnel, n.effectivenessVerifiedBy),
   effectiveness_verified_at: n.effectivenessVerifiedAt || null,
   related_nc_id: n.relatedNcId || null,
+  laboratory_id: n.laboratoryId,
 });
 
 // ---------------- risks (Clause 5.6) ----------------

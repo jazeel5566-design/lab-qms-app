@@ -31,6 +31,7 @@ import * as taskTemplatesApi from "./api/taskTemplates.js";
 import * as notificationsApi from "./api/notifications.js";
 import * as machineKeysApi from "./api/machineKeys.js";
 import * as notificationSettingsApi from "./api/notificationSettings.js";
+import * as labsApi from "./api/laboratories.js";
 import * as auditApi from "./api/auditAndBackup.js";
 import {
   syncList, syncClauseStatus, nameToId, idToName, rowToClauseStatus,
@@ -43,6 +44,7 @@ import {
   eqaFromDb, eqaToDb, documentFromDb, documentToDb,
   riskFromDb, riskToDb, managementReviewFromDb, managementReviewToDb,
   acknowledgmentFromDb, downtimeFromDb, clauseEvidenceFromDb, taskCommentFromDb, taskTemplateFromDb,
+  laboratoryFromDb, personnelLabFromDb,
 } from "./dataSync.js";
 
 // ---------- ISO 15189:2022 clause tree ----------
@@ -349,6 +351,10 @@ export default function App() {
   const [taskComments, setTaskComments] = useState([]);
   const [taskTemplates, setTaskTemplates] = useState([]);
   const [notificationSettings, setNotificationSettings] = useState({});
+  const [laboratories, setLaboratories] = useState([]);
+  const [personnelLaboratories, setPersonnelLaboratories] = useState([]);
+  const [activeLaboratoryId, setActiveLaboratoryId] = useState(null);
+  const [labChoicesPending, setLabChoicesPending] = useState(null); // null = not yet determined; array = show the picker with these options
 
   // Runs exactly once, on first load: is there already a signed-in session
   // (e.g. a returning visitor)? Deliberately does NOT fetch any app data here —
@@ -373,6 +379,76 @@ export default function App() {
   // session already existed, AND immediately after a fresh login, since
   // currentUser?.id changes in both cases. This is what fixes needing a
   // manual reload after signing in.
+  /**
+   * Loads everything that depends on knowing which laboratory is active.
+   * Split out from the effect below so it can be called either immediately
+   * (the common case — exactly one laboratory, nothing to ask the user)
+   * or later, once they've picked one from the login-time selector.
+   */
+  const loadLabScopedData = async (labId, p) => {
+    const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows] = await Promise.all([
+      clauseApi.listClauseStatus(labId),
+      taskApi.listTasks(labId),
+      ncApi.listNonconformities(labId),
+      opsApi.listCompetency(),
+      opsApi.listEquipment(),
+      opsApi.listEquipmentRecords(),
+      qcApi.listMachines(),
+      qcApi.listParameters(),
+      qcApi.listControls(),
+      qcApi.listRuns(),
+      eqaDocApi.listEqaEvents(),
+      eqaDocApi.listDocuments(),
+      riskApi.listRisks(),
+      mgmtReviewApi.listManagementReviews(),
+      ackApi.listAllAcknowledgments(),
+      downtimeApi.listEquipmentDowntime(),
+      clauseEvidenceApi.listClauseEvidence(),
+      taskCommentsApi.listTaskComments(),
+      taskTemplatesApi.listTaskTemplates(),
+      notificationSettingsApi.listNotificationSettings(),
+    ]);
+
+    const cs = {};
+    Object.entries(csRows).forEach(([clauseId, row]) => {
+      cs[clauseId] = { ...rowToClauseStatus(row), owner: idToName(p, row.owner_id) };
+    });
+    setClauseStatus(cs);
+    setTasks(tRows.map(r => taskFromDb(r, p)));
+    setNcs(nRows.map(r => ncFromDb(r, p)));
+    setCompetency(compRows.map(r => competencyFromDb(r, p)));
+    setEquipment(eqRows.map(equipmentFromDb));
+    setEquipmentRecords(eqrRows.map(r => equipmentRecordFromDb(r, p)));
+    setQcMachines(qmRows.map(machineFromDb));
+    setQcParameters(qpRows.map(parameterFromDb));
+    setQcControls(qcRows.map(controlFromDb));
+    setQcRuns(qrRows.map(r => runFromDb(r, p)));
+    setEqaEvents(eqaRows.map(eqaFromDb));
+    setDocuments(docRows.map(r => documentFromDb(r, p)));
+    setRisks(riskRows.map(r => riskFromDb(r, p)));
+    setManagementReviews(mrRows.map(r => managementReviewFromDb(r, p)));
+    setDocumentAcknowledgments(ackRows.map(r => acknowledgmentFromDb(r, p)));
+    setEquipmentDowntime(dtRows.map(r => downtimeFromDb(r, p)));
+    setClauseEvidence(ceRows.map(r => clauseEvidenceFromDb(r, p)));
+    setTaskComments(tcRows.map(r => taskCommentFromDb(r, p)));
+    setTaskTemplates(ttRows.map(r => taskTemplateFromDb(r, p)));
+    setNotificationSettings(Object.fromEntries(nsRows.map(r => [r.event_key, r.enabled])));
+  };
+
+  /** Called once the user has picked a laboratory from the login-time selector (only shown when they have more than one). */
+  const selectLaboratoryAction = async (labId) => {
+    setActiveLaboratoryId(labId);
+    setLabChoicesPending(null);
+    setLoading(true);
+    try {
+      await loadLabScopedData(labId, personnel);
+    } catch (err) {
+      console.error("Failed to load data from Supabase:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!currentUser) return;
     setLoading(true);
@@ -382,53 +458,27 @@ export default function App() {
         const p = pRows.map(personnelFromDb);
         setPersonnel(p);
 
-        const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows] = await Promise.all([
-          clauseApi.listClauseStatus(),
-          taskApi.listTasks(),
-          ncApi.listNonconformities(),
-          opsApi.listCompetency(),
-          opsApi.listEquipment(),
-          opsApi.listEquipmentRecords(),
-          qcApi.listMachines(),
-          qcApi.listParameters(),
-          qcApi.listControls(),
-          qcApi.listRuns(),
-          eqaDocApi.listEqaEvents(),
-          eqaDocApi.listDocuments(),
-          riskApi.listRisks(),
-          mgmtReviewApi.listManagementReviews(),
-          ackApi.listAllAcknowledgments(),
-          downtimeApi.listEquipmentDowntime(),
-          clauseEvidenceApi.listClauseEvidence(),
-          taskCommentsApi.listTaskComments(),
-          taskTemplatesApi.listTaskTemplates(),
-          notificationSettingsApi.listNotificationSettings(),
-        ]);
+        const [labRows, plRows] = await Promise.all([labsApi.listLaboratories(), labsApi.listPersonnelLaboratories()]);
+        const labs = labRows.map(laboratoryFromDb);
+        const pls = plRows.map(personnelLabFromDb);
+        setLaboratories(labs);
+        setPersonnelLaboratories(pls);
 
-        const cs = {};
-        Object.entries(csRows).forEach(([clauseId, row]) => {
-          cs[clauseId] = { ...rowToClauseStatus(row), owner: idToName(p, row.owner_id) };
-        });
-        setClauseStatus(cs);
-        setTasks(tRows.map(r => taskFromDb(r, p)));
-        setNcs(nRows.map(r => ncFromDb(r, p)));
-        setCompetency(compRows.map(r => competencyFromDb(r, p)));
-        setEquipment(eqRows.map(equipmentFromDb));
-        setEquipmentRecords(eqrRows.map(r => equipmentRecordFromDb(r, p)));
-        setQcMachines(qmRows.map(machineFromDb));
-        setQcParameters(qpRows.map(parameterFromDb));
-        setQcControls(qcRows.map(controlFromDb));
-        setQcRuns(qrRows.map(r => runFromDb(r, p)));
-        setEqaEvents(eqaRows.map(eqaFromDb));
-        setDocuments(docRows.map(r => documentFromDb(r, p)));
-        setRisks(riskRows.map(r => riskFromDb(r, p)));
-        setManagementReviews(mrRows.map(r => managementReviewFromDb(r, p)));
-        setDocumentAcknowledgments(ackRows.map(r => acknowledgmentFromDb(r, p)));
-        setEquipmentDowntime(dtRows.map(r => downtimeFromDb(r, p)));
-        setClauseEvidence(ceRows.map(r => clauseEvidenceFromDb(r, p)));
-        setTaskComments(tcRows.map(r => taskCommentFromDb(r, p)));
-        setTaskTemplates(ttRows.map(r => taskTemplateFromDb(r, p)));
-        setNotificationSettings(Object.fromEntries(nsRows.map(r => [r.event_key, r.enabled])));
+        const myPersonnel = p.find(person => person.id === currentUser.id || person.name === currentUser.name);
+        const accessibleLabs = currentUser.role === "Admin"
+          ? labs
+          : labs.filter(lab => pls.some(pl => pl.laboratoryId === lab.id && pl.personnelId === myPersonnel?.id));
+
+        if (accessibleLabs.length === 1) {
+          setActiveLaboratoryId(accessibleLabs[0].id);
+          await loadLabScopedData(accessibleLabs[0].id, p);
+        } else {
+          // Either no laboratory assigned yet, or more than one — either way,
+          // pause here and let the picker (or an explanatory message, if
+          // the list is empty) decide what happens next, rather than
+          // guessing which laboratory's data to show.
+          setLabChoicesPending(accessibleLabs);
+        }
       } catch (err) {
         console.error("Failed to load data from Supabase:", err);
       } finally {
@@ -469,7 +519,7 @@ export default function App() {
     try {
       const synced = await syncClauseStatus({
         prev, next,
-        upsert: (clauseId, val) => clauseApi.upsertClauseStatus(clauseId, {
+        upsert: (clauseId, val) => clauseApi.upsertClauseStatus(clauseId, activeLaboratoryId, {
           status: val.status, owner_id: nameToId(personnel, val.owner), last_reviewed: val.lastReviewed || null, notes: val.notes || null,
           evidence_document_id: val.evidenceDocumentId || null,
         }),
@@ -625,6 +675,7 @@ export default function App() {
       source: "EQA/PT failure", severity: "Major",
       rootCause: "", correctiveAction: "", preventiveAction: "", evidence: "", verifiedBy: "", closedDate: "",
       effectivenessCheckDue: "", effectivenessCheckResult: "", effectivenessNotes: "", effectivenessVerifiedBy: "",
+      laboratoryId: activeLaboratoryId,
     };
     const syncedNcs = await updateNcs([newNc, ...ncs]);
     if (!syncedNcs) return; // NC creation itself failed — already alerted by updateNcs, nothing further to link.
@@ -726,6 +777,37 @@ export default function App() {
     } catch (e) {
       alert("Could not update this setting.\n\n" + e.message);
       setNotificationSettings(prev => ({ ...prev, [eventKey]: currentlyEnabled })); // revert on failure
+    }
+  };
+
+  /** Admin-only. Immediately seeds all 34 clauses for the new lab — see the note on seedClauseStatusForLab for why this is essential, not optional. */
+  const createLaboratoryAction = async (name) => {
+    const row = await labsApi.createLaboratory(name);
+    const lab = laboratoryFromDb(row);
+    await clauseApi.seedClauseStatusForLab(lab.id, ALL_SUBCLAUSES.map(s => s.id));
+    setLaboratories(prev => [...prev, lab].sort((a, b) => a.name.localeCompare(b.name)));
+    return lab;
+  };
+
+  const assignPersonnelToLabAction = async (personnelId, laboratoryId) => {
+    const row = await labsApi.assignPersonnelToLab(personnelId, laboratoryId);
+    setPersonnelLaboratories(prev => [...prev, personnelLabFromDb(row)]);
+  };
+  const unassignPersonnelFromLabAction = async (id) => {
+    await labsApi.unassignPersonnelFromLab(id);
+    setPersonnelLaboratories(prev => prev.filter(pl => pl.id !== id));
+  };
+
+  /** Switching mid-session re-loads every lab-scoped module for the newly chosen laboratory. */
+  const switchLaboratoryAction = async (labId) => {
+    setActiveLaboratoryId(labId);
+    setLoading(true);
+    try {
+      await loadLabScopedData(labId, personnel);
+    } catch (e) {
+      alert("Could not switch laboratory.\n\n" + e.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -886,6 +968,10 @@ export default function App() {
     </div>;
   }
 
+  if (labChoicesPending !== null && !activeLaboratoryId) {
+    return <LaboratoryPicker choices={labChoicesPending} onSelect={selectLaboratoryAction} onLogout={() => { authApi.signOut(); setCurrentUser(null); setLabChoicesPending(null); }} />;
+  }
+
   const isAdmin = currentUser.role === "Admin";
   const isQaManager = currentUser.role === "QA Manager";
   const canEdit = currentUser.role !== "Viewer";
@@ -914,6 +1000,12 @@ export default function App() {
     { id: "manual", label: "User Manual", icon: BookOpen, href: "/Lab-QMS-User-Manual.pdf" },
   ];
 
+  const myOwnPersonnel = personnel.find(p => p.id === currentUser.id || p.name === currentUser.name);
+  const switchableLabs = isAdmin
+    ? laboratories
+    : laboratories.filter(lab => personnelLaboratories.some(pl => pl.laboratoryId === lab.id && pl.personnelId === myOwnPersonnel?.id));
+  const activeLab = laboratories.find(l => l.id === activeLaboratoryId);
+
   return (
     <div className="min-h-screen flex" style={{ background: COLORS.bg, color: COLORS.ink, fontFamily: "'Inter', system-ui, sans-serif" }}>
       {/* Sidebar */}
@@ -925,6 +1017,18 @@ export default function App() {
             <div className="text-xs" style={{ color: COLORS.seafoam }}>ISO 15189:2022</div>
           </div>
         </div>
+        {switchableLabs.length > 1 ? (
+          <div className="px-5 py-3 border-b" style={{ borderColor: "#1C4753" }}>
+            <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: "#7C9C97" }}>Laboratory</div>
+            <select value={activeLaboratoryId || ""} onChange={e => switchLaboratoryAction(e.target.value)}
+              className="w-full text-xs rounded-md px-2 py-1.5 border-0"
+              style={{ background: "#1C4753", color: "white" }}>
+              {switchableLabs.map(lab => <option key={lab.id} value={lab.id}>{lab.name}</option>)}
+            </select>
+          </div>
+        ) : activeLab ? (
+          <div className="px-5 py-3 border-b text-xs" style={{ borderColor: "#1C4753", color: "#A9C4C0" }}>{activeLab.name}</div>
+        ) : null}
         <nav className="flex-1 py-3">
           {NAV.map(n => {
             const Icon = n.icon;
@@ -973,13 +1077,13 @@ export default function App() {
         {tab === "clauses" && <ClauseRegister clauseStatus={clauseStatus} updateClauseStatus={updateClauseStatus}
           personnel={personnel} tasks={tasks} updateTasks={updateTasks} canEdit={canEdit} canAssignTasks={canAssignTasks} documents={documents}
           canSeeAuditBackup={canSeeAuditBackup} clauseEvidence={clauseEvidence} canManageClauseStatus={canManageClauseStatus}
-          addClauseEvidenceAction={addClauseEvidenceAction} removeClauseEvidenceAction={removeClauseEvidenceAction} />}
+          addClauseEvidenceAction={addClauseEvidenceAction} removeClauseEvidenceAction={removeClauseEvidenceAction} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "tasks" && <Tasks tasks={tasks} updateTasks={updateTasks} setTaskStatusAction={setTaskStatusAction} approveTaskCompletionAction={approveTaskCompletionAction}
           personnel={personnel} canEdit={canEdit} canAssignTasks={canAssignTasks} taskComments={taskComments} currentUser={currentUser}
           addTaskCommentAction={addTaskCommentAction} deleteTaskCommentAction={deleteTaskCommentAction}
           taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction}
-          notificationSettings={notificationSettings} />}
-        {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} notificationSettings={notificationSettings} />}
+          notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} />}
+        {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} />}
         {tab === "iqc" && <IQCPage qcMachines={qcMachines} updateQcMachines={updateQcMachines}
           qcParameters={qcParameters} updateQcParameters={updateQcParameters}
@@ -999,12 +1103,14 @@ export default function App() {
           currentUser={currentUser} canEdit={canEdit} canPublishControlledDocs={canPublishControlledDocs}
           publishControlledDocumentAction={publishControlledDocumentAction}
           documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} />}
-        {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canEdit={canEdit} />}
+        {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canEdit={canEdit}
+          laboratories={laboratories} personnelLaboratories={personnelLaboratories} assignPersonnelToLabAction={assignPersonnelToLabAction} unassignPersonnelFromLabAction={unassignPersonnelFromLabAction} />}
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} addManagementReview={addManagementReview}
           deleteManagementReview={deleteManagementReview} stats={stats} currentUser={currentUser} />}
         {tab === "audit" && canSeeAuditBackup && <AuditBackup />}
         {tab === "settings" && isAdmin && <Settings qcMachines={qcMachines} currentUser={currentUser}
-          notificationSettings={notificationSettings} toggleNotificationSettingAction={toggleNotificationSettingAction} />}
+          notificationSettings={notificationSettings} toggleNotificationSettingAction={toggleNotificationSettingAction}
+          laboratories={laboratories} createLaboratoryAction={createLaboratoryAction} />}
       </div>
     </div>
   );
@@ -1226,7 +1332,7 @@ function Panel({ title, onSeeAll, children }) {
 function Empty({ text }) { return <div className="text-sm text-gray-400 py-4 text-center">{text}</div>; }
 
 // ---------------- Clause Register ----------------
-function ClauseRegister({ clauseStatus, updateClauseStatus, personnel, tasks, updateTasks, canAssignTasks, documents, canSeeAuditBackup, clauseEvidence, addClauseEvidenceAction, removeClauseEvidenceAction, canManageClauseStatus }) {
+function ClauseRegister({ clauseStatus, updateClauseStatus, personnel, tasks, updateTasks, canAssignTasks, documents, canSeeAuditBackup, clauseEvidence, addClauseEvidenceAction, removeClauseEvidenceAction, canManageClauseStatus, activeLaboratoryId }) {
   const [openGroups, setOpenGroups] = useState(() => Object.fromEntries(CLAUSES.map(c => [c.id, true])));
   const [taskDraftFor, setTaskDraftFor] = useState(null);
   const [historyOpenFor, setHistoryOpenFor] = useState(null);
@@ -1256,7 +1362,7 @@ function ClauseRegister({ clauseStatus, updateClauseStatus, personnel, tasks, up
   };
 
   const createTaskFromClause = (clauseId, draft) => {
-    const t = { id: uid(), title: draft.title, clauseId, assignedTo: draft.assignedTo, dueDate: draft.dueDate, priority: draft.priority || "Medium", status: "Open", notes: "", createdAt: todayISO() };
+    const t = { id: uid(), title: draft.title, clauseId, assignedTo: draft.assignedTo, dueDate: draft.dueDate, priority: draft.priority || "Medium", status: "Open", notes: "", createdAt: todayISO(), laboratoryId: activeLaboratoryId };
     updateTasks([t, ...tasks]);
     setTaskDraftFor(null);
   };
@@ -1415,7 +1521,7 @@ function MiniTaskForm({ personnel, onSave, onCancel }) {
 }
 
 // ---------------- Tasks ----------------
-function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks, taskComments, currentUser, addTaskCommentAction, deleteTaskCommentAction, taskTemplates, createTaskTemplateAction, deleteTaskTemplateAction, notificationSettings }) {
+function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks, taskComments, currentUser, addTaskCommentAction, deleteTaskCommentAction, taskTemplates, createTaskTemplateAction, deleteTaskTemplateAction, notificationSettings, activeLaboratoryId }) {
   const [showForm, setShowForm] = useState(false);
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterAssignee, setFilterAssignee] = useState("All");
@@ -1423,7 +1529,7 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
   const [newComment, setNewComment] = useState("");
 
   const addTask = (draft) => {
-    updateTasks([{ id: uid(), ...draft, status: "Open", createdAt: todayISO() }, ...tasks]);
+    updateTasks([{ id: uid(), ...draft, status: "Open", createdAt: todayISO(), laboratoryId: activeLaboratoryId }, ...tasks]);
     setShowForm(false);
     if (draft.assignedTo && notificationSettings.task_assigned !== false) {
       const assignee = personnel.find(p => p.name === draft.assignedTo);
@@ -1631,7 +1737,7 @@ function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTempla
 }
 
 // ---------------- NC / CAPA Register ----------------
-function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings }) {
+function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, activeLaboratoryId }) {
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [showTrends, setShowTrends] = useState(false);
@@ -1645,6 +1751,7 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings }
       id: uid(), ncNumber: nextNcNumber(), status: "Open", dateRaised: todayISO(),
       rootCause: "", correctiveAction: "", preventiveAction: "", evidence: "", verifiedBy: "", closedDate: "",
       effectivenessCheckDue: "", effectivenessCheckResult: "", effectivenessNotes: "", effectivenessVerifiedBy: "",
+      laboratoryId: activeLaboratoryId,
       ...draft,
     };
     updateNcs([nc, ...ncs]);
@@ -2091,7 +2198,7 @@ function NcForm({ personnel, existingNcs, onCancel, onSave }) {
 }
 
 // ---------------- Personnel ----------------
-function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAdmin, canEdit }) {
+function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAdmin, canEdit, laboratories, personnelLaboratories, assignPersonnelToLabAction, unassignPersonnelFromLabAction }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [email, setEmail] = useState("");
@@ -2266,6 +2373,27 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
               </>
             )}
             {isAdmin && <button onClick={() => removePerson(p.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+            {isAdmin && laboratories.length > 0 && (
+              <div className="w-full flex items-center gap-2 flex-wrap pl-12">
+                {personnelLaboratories.filter(pl => pl.personnelId === p.id).map(pl => {
+                  const lab = laboratories.find(l => l.id === pl.laboratoryId);
+                  if (!lab) return null;
+                  return (
+                    <span key={pl.id} className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: COLORS.mint, color: COLORS.teal }}>
+                      {lab.name}
+                      <button onClick={() => unassignPersonnelFromLabAction(pl.id)} className="hover:text-red-500">×</button>
+                    </span>
+                  );
+                })}
+                <select value="" onChange={e => e.target.value && assignPersonnelToLabAction(p.id, e.target.value)}
+                  className="text-xs border rounded-md px-1.5 py-0.5" style={{ borderColor: "#D8E5E1" }}>
+                  <option value="">+ Assign lab…</option>
+                  {laboratories.filter(lab => !personnelLaboratories.some(pl => pl.personnelId === p.id && pl.laboratoryId === lab.id)).map(lab => (
+                    <option key={lab.id} value={lab.id}>{lab.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -4252,7 +4380,7 @@ function SignInScreen({ onSignIn }) {
               <input className={inputCls} style={inputStyle} value={username} onChange={e => { setUsername(e.target.value); setError(""); }} placeholder="e.g. RC-0142" autoCapitalize="none" />
             </Field>
             <Field label="Password">
-              <input type="password" className={inputCls} style={inputStyle} value={password} onChange={e => { setPassword(e.target.value); setError(""); }} placeholder="Password" />
+              <input type="password" className={inputCls} style={inputStyle} value={password} onChange={e => { setPassword(e.target.value); setError(""); }} onKeyDown={e => { if (e.key === "Enter") handleLogin(); }} placeholder="Password" />
             </Field>
             {error && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{error}</div>}
             <button onClick={handleLogin} className="w-full text-sm px-4 py-2 rounded-md text-white font-medium" style={{ background: COLORS.teal }}>Log in</button>
@@ -4272,9 +4400,39 @@ function SignInScreen({ onSignIn }) {
           </>
         )}
 
-        <div className="text-[11px] text-gray-400 mt-4 leading-relaxed">
-          This login is a convenience check built into the app itself, not a secured authentication service — credentials are stored in plain text in this browser's local storage. For a hard security boundary, host this behind a real authentication system.
+      </div>
+    </div>
+  );
+}
+
+/** Shown after a successful login, before the main app, when the person's laboratory can't be determined automatically — either because they have more than one assigned (they choose), or none at all (Admin sees every lab regardless; anyone else sees a clear message instead of a confusing empty app). */
+function LaboratoryPicker({ choices, onSelect, onLogout }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center" style={{ background: COLORS.bg }}>
+      <div className="w-full max-w-sm bg-white rounded-xl border p-6" style={{ borderColor: "#E1EBE8" }}>
+        <div className="flex items-center gap-2 mb-1">
+          <ShieldCheck size={22} color={COLORS.teal} />
+          <div className="font-semibold text-lg" style={{ color: COLORS.navy }}>Lab QMS</div>
         </div>
+        {choices.length === 0 ? (
+          <>
+            <div className="text-sm mb-4" style={{ color: COLORS.navy }}>No laboratory assigned</div>
+            <div className="text-xs text-gray-500 mb-4">Your account isn't assigned to any laboratory yet. Contact an Admin to be added to one before you can use Lab QMS.</div>
+          </>
+        ) : (
+          <>
+            <div className="text-xs text-gray-400 mb-4">You're assigned to more than one laboratory. Choose which one to work in — you can switch later from the sidebar.</div>
+            <div className="space-y-2">
+              {choices.map(lab => (
+                <button key={lab.id} onClick={() => onSelect(lab.id)}
+                  className="w-full text-left px-4 py-3 rounded-md border text-sm" style={{ borderColor: "#D8E5E1", color: COLORS.ink }}>
+                  {lab.name}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+        <button onClick={onLogout} className="w-full text-xs text-gray-400 mt-4">Log out</button>
       </div>
     </div>
   );
@@ -5149,7 +5307,10 @@ function AuditBackup() {
 }
 
 // ---------------- Settings (Admin only) ----------------
-function Settings({ qcMachines, currentUser, notificationSettings, toggleNotificationSettingAction }) {
+function Settings({ qcMachines, currentUser, notificationSettings, toggleNotificationSettingAction, laboratories, createLaboratoryAction }) {
+  const [newLabName, setNewLabName] = useState("");
+  const [creatingLab, setCreatingLab] = useState(false);
+  const [labError, setLabError] = useState("");
   const [keys, setKeys] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -5233,6 +5394,35 @@ function Settings({ qcMachines, currentUser, notificationSettings, toggleNotific
     <div className="p-8 max-w-4xl">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Settings</h1>
       <p className="text-sm text-gray-500 mb-6">Admin-only configuration for Lab QMS.</p>
+
+      <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+        <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Laboratories</div>
+        <p className="text-xs text-gray-500 mb-3">
+          Each laboratory is a fully separate workspace — its own clause register, tasks, and NCs, with more modules
+          following. Creating one automatically seeds all 34 ISO 15189:2022 clauses for it, ready to use immediately.
+        </p>
+        <div className="border rounded-md divide-y mb-3" style={{ borderColor: "#EEF3F1" }}>
+          {laboratories.length === 0 && <div className="text-xs text-gray-400 px-3 py-3">No laboratories yet.</div>}
+          {laboratories.map(lab => (
+            <div key={lab.id} className="px-3 py-2 text-sm">{lab.name}</div>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <input value={newLabName} onChange={e => setNewLabName(e.target.value)} placeholder="e.g. Biochemistry"
+            className="text-sm border rounded-md px-3 py-1.5 flex-1" style={{ borderColor: "#D8E5E1" }} />
+          <button disabled={creatingLab || !newLabName.trim()} onClick={async () => {
+            setCreatingLab(true); setLabError("");
+            try { await createLaboratoryAction(newLabName.trim()); setNewLabName(""); }
+            catch (e) { setLabError(e.message); }
+            finally { setCreatingLab(false); }
+          }} className="text-sm px-4 py-1.5 rounded-md text-white disabled:opacity-50" style={{ background: COLORS.teal }}>
+            {creatingLab ? "Creating…" : "Add laboratory"}
+          </button>
+        </div>
+        {labError && <div className="text-xs mt-2" style={{ color: COLORS.red }}>{labError}</div>}
+        <div className="text-[11px] text-gray-400 mt-2">Assign staff to laboratories from the Personnel page.</div>
+      </div>
+
 
       <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
         <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Machine data interface (IQC & EQAS)</div>

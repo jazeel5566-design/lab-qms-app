@@ -1,7 +1,9 @@
 import { supabase } from "../supabaseClient.js";
 
-export async function listNonconformities() {
-  const { data, error } = await supabase.from("nonconformities").select("*").order("created_at", { ascending: false });
+export async function listNonconformities(laboratoryId) {
+  let q = supabase.from("nonconformities").select("*").order("created_at", { ascending: false });
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
 }
