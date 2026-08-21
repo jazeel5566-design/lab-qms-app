@@ -32,6 +32,7 @@ CREATE OR REPLACE FUNCTION public.has_lab_access(lab_id uuid)
   RETURNS boolean
   LANGUAGE sql
   STABLE
+  SECURITY DEFINER
 AS $function$
   SELECT
     coalesce(current_access_role(), 'Viewer') = 'Admin'
@@ -45,6 +46,13 @@ AS $function$
       WHERE p.auth_user_id = auth.uid() AND p.laboratory_id = lab_id
     );
 $function$;
+-- SECURITY DEFINER is required here: without it, this function's internal
+-- lookups against `personnel` are themselves subject to personnel's RLS --
+-- which includes a RESTRICTIVE policy that calls has_lab_access() to
+-- evaluate itself, causing recursive RLS evaluation and breaking login for
+-- any non-Admin user. current_access_role() (0002) uses the same pattern
+-- for the same reason. Caught via live testing on 2026-08-21: QA Manager
+-- and Technologist accounts could not log in until this was added.
 
 -- ---------------------------------------------------------------------
 -- RESTRICTIVE lab-access policy on all 23 lab-data tables.
