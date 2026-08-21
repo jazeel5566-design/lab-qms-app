@@ -2355,14 +2355,14 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
       <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
         {personnel.length === 0 && <Empty text="No personnel added yet." />}
         {personnel.map(p => (
-          <div key={p.id} className="flex items-center gap-3 px-5 py-3 flex-wrap">
+          <div key={p.id} className="flex items-start gap-3 px-5 py-3 flex-wrap">
             <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium text-white shrink-0" style={{ background: COLORS.teal }}>
               {p.name.slice(0, 1).toUpperCase()}
             </div>
             <div className="flex-1 min-w-[140px]">
               <div className="text-sm">{p.name}{p.id === currentUser?.id ? <span className="text-xs text-gray-400"> (you)</span> : ""}</div>
               {isAdmin ? (
-                <div className="flex gap-2 mt-1">
+                <div className="flex gap-2 mt-1 flex-wrap">
                   <input value={valueFor(p, "role")} onChange={e => editRow(p.id, { role: e.target.value })}
                     placeholder="Job title" className="text-xs border rounded-md px-2 py-1 w-36" style={{ borderColor: "#D8E5E1" }} />
                   <input value={valueFor(p, "email")} onChange={e => editRow(p.id, { email: e.target.value })}
@@ -2371,34 +2371,35 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
               ) : (
                 <div className="text-xs text-gray-400">{p.role || "No role set"}{p.email ? ` · ${p.email}` : ""}</div>
               )}
+              {isAdmin && (
+                <div className="flex items-center gap-2 flex-wrap mt-2">
+                  <input value={valueFor(p, "recordCardNumber")} onChange={e => editRow(p.id, { recordCardNumber: e.target.value })}
+                    placeholder="Record card #" className="text-xs border rounded-md px-2 py-1 w-28" style={{ borderColor: "#D8E5E1" }} />
+                  <select value={valueFor(p, "accessRole") || "Technologist"} onChange={e => editRow(p.id, { accessRole: e.target.value })} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
+                    {ROLES.map(r => <option key={r}>{r}</option>)}
+                  </select>
+                  <select value={valueFor(p, "laboratoryId") || ""} onChange={e => editRow(p.id, { laboratoryId: e.target.value })}
+                    className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }} title="Primary laboratory">
+                    <option value="">No primary lab</option>
+                    {laboratories.map(lab => <option key={lab.id} value={lab.id}>{lab.name}</option>)}
+                  </select>
+                  {rowDrafts[p.id] && (
+                    <button onClick={() => saveRow(p)} disabled={savingRow === p.id}
+                      className="text-xs px-2 py-1 rounded-md text-white disabled:opacity-50 whitespace-nowrap" style={{ background: COLORS.teal }}>
+                      {savingRow === p.id ? "Saving…" : "Save"}
+                    </button>
+                  )}
+                  <ResetPasswordControl personnelId={p.id} />
+                  <button onClick={() => removePerson(p.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>
+                </div>
+              )}
             </div>
-            {isAdmin ? (
-              <>
-                <input value={valueFor(p, "recordCardNumber")} onChange={e => editRow(p.id, { recordCardNumber: e.target.value })}
-                  placeholder="Record card #" className="text-xs border rounded-md px-2 py-1 w-28" style={{ borderColor: "#D8E5E1" }} />
-                <select value={valueFor(p, "accessRole") || "Technologist"} onChange={e => editRow(p.id, { accessRole: e.target.value })} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
-                  {ROLES.map(r => <option key={r}>{r}</option>)}
-                </select>
-                <select value={valueFor(p, "laboratoryId") || ""} onChange={e => editRow(p.id, { laboratoryId: e.target.value })}
-                  className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }} title="Primary laboratory">
-                  <option value="">No primary lab</option>
-                  {laboratories.map(lab => <option key={lab.id} value={lab.id}>{lab.name}</option>)}
-                </select>
-                {rowDrafts[p.id] && (
-                  <button onClick={() => saveRow(p)} disabled={savingRow === p.id}
-                    className="text-xs px-2 py-1 rounded-md text-white disabled:opacity-50 whitespace-nowrap" style={{ background: COLORS.teal }}>
-                    {savingRow === p.id ? "Saving…" : "Save"}
-                  </button>
-                )}
-                <ResetPasswordControl personnelId={p.id} />
-              </>
-            ) : (
+            {!isAdmin && (
               <>
                 <span className="text-xs text-gray-400">{p.recordCardNumber || "no card #"}</span>
                 <Badge color={COLORS.teal}>{p.accessRole || "Technologist"}</Badge>
               </>
             )}
-            {isAdmin && <button onClick={() => removePerson(p.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
             {isAdmin && laboratories.length > 0 && (
               <div className="w-full flex items-center gap-2 flex-wrap pl-12">
                 {personnelLaboratories.filter(pl => pl.personnelId === p.id).map(pl => {
