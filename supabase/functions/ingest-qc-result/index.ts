@@ -74,7 +74,7 @@ serve(async (req) => {
   }
 
   // If this key is restricted to one specific machine, enforce that here.
-  let machineQuery = admin.from("qc_machines").select("id, name").ilike("name", machineName);
+  let machineQuery = admin.from("qc_machines").select("id, name, laboratory_id").ilike("name", machineName);
   const { data: machine } = await machineQuery.single();
   if (!machine) return jsonError(`No QC machine found matching "${machineName}"`, 404);
   if (keyRow.qc_machine_id && keyRow.qc_machine_id !== machine.id) {
@@ -99,6 +99,7 @@ serve(async (req) => {
       value,
       authorized: false,
       comment: `Received via machine interface (key: ${keyRow.label})`,
+      laboratory_id: machine.laboratory_id,
     })
     .select()
     .single();

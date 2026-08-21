@@ -5,10 +5,10 @@ export async function listClauseEvidence() {
   if (error) throw new Error(error.message);
   return data;
 }
-export async function addClauseEvidence(clauseId, documentId, addedBy) {
+export async function addClauseEvidence(clauseId, documentId, addedBy, laboratoryId) {
   const { data, error } = await supabase
     .from("clause_evidence")
-    .insert({ clause_id: clauseId, document_id: documentId, added_by: addedBy })
+    .insert({ clause_id: clauseId, document_id: documentId, added_by: addedBy, laboratory_id: laboratoryId })
     .select()
     .single();
   if (error) throw new Error(error.message);

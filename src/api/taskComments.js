@@ -5,8 +5,8 @@ export async function listTaskComments() {
   if (error) throw new Error(error.message);
   return data;
 }
-export async function addTaskComment(taskId, authorId, comment) {
-  const { data, error } = await supabase.from("task_comments").insert({ task_id: taskId, author_id: authorId, comment }).select().single();
+export async function addTaskComment(taskId, authorId, comment, laboratoryId) {
+  const { data, error } = await supabase.from("task_comments").insert({ task_id: taskId, author_id: authorId, comment, laboratory_id: laboratoryId }).select().single();
   if (error) throw new Error(error.message);
   return data;
 }

@@ -7,10 +7,10 @@ export async function listAllAcknowledgments() {
 }
 
 /** A person can only ever acknowledge as themselves — enforced server-side too (0009 migration). */
-export async function acknowledgeDocument(documentId, personnelId) {
+export async function acknowledgeDocument(documentId, personnelId, laboratoryId) {
   const { data, error } = await supabase
     .from("document_acknowledgments")
-    .upsert({ document_id: documentId, personnel_id: personnelId }, { onConflict: "document_id,personnel_id" })
+    .upsert({ document_id: documentId, personnel_id: personnelId, laboratory_id: laboratoryId }, { onConflict: "document_id,personnel_id" })
     .select()
     .single();
   if (error) throw new Error(error.message);

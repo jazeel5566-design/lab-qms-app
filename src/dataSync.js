@@ -105,6 +105,7 @@ export const clauseEvidenceFromDb = (row, personnel) => ({
   documentId: row.document_id,
   addedBy: idToName(personnel, row.added_by),
   addedAt: row.added_at,
+  laboratoryId: row.laboratory_id,
 });
 
 // ---------------- equipment_downtime ----------------
@@ -116,6 +117,7 @@ export const downtimeFromDb = (row, personnel) => ({
   resolvedAt: row.resolved_at || "",
   resolutionNotes: row.resolution_notes || "",
   reportedBy: idToName(personnel, row.reported_by),
+  laboratoryId: row.laboratory_id,
 });
 
 // ---------------- tasks ----------------
@@ -158,6 +160,7 @@ export const taskCommentFromDb = (row, personnel) => ({
   authorName: idToName(personnel, row.author_id),
   comment: row.comment,
   createdAt: row.created_at,
+  laboratoryId: row.laboratory_id,
 });
 
 // ---------------- task_templates ----------------
@@ -169,6 +172,7 @@ export const taskTemplateFromDb = (row, personnel) => ({
   isRecurring: row.is_recurring || false,
   recurrenceIntervalDays: row.recurrence_interval_days || null,
   createdBy: idToName(personnel, row.created_by),
+  laboratoryId: row.laboratory_id,
 });
 
 // ---------------- nonconformities ----------------
@@ -244,6 +248,7 @@ export const riskFromDb = (row, personnel) => ({
   identifiedDate: row.identified_date || "",
   lastReviewed: row.last_reviewed || "",
   nextReviewDate: row.next_review_date || "",
+  laboratoryId: row.laboratory_id,
 });
 export const riskToDb = (r, personnel) => ({
   title: r.title,
@@ -258,6 +263,7 @@ export const riskToDb = (r, personnel) => ({
   identified_date: r.identifiedDate || null,
   last_reviewed: r.lastReviewed || null,
   next_review_date: r.nextReviewDate || null,
+  laboratory_id: r.laboratoryId,
 });
 
 // ---------------- management_reviews (Clause 8.9) ----------------
@@ -271,6 +277,7 @@ export const managementReviewFromDb = (row, personnel) => ({
   actionsArising: row.actions_arising || "",
   conductedBy: idToName(personnel, row.conducted_by),
   createdAt: row.created_at,
+  laboratoryId: row.laboratory_id,
 });
 export const managementReviewToDb = (m, personnel) => ({
   review_date: m.reviewDate || null,
@@ -280,6 +287,7 @@ export const managementReviewToDb = (m, personnel) => ({
   decisions: m.decisions || null,
   actions_arising: m.actionsArising || null,
   conducted_by: nameToId(personnel, m.conductedBy),
+  laboratory_id: m.laboratoryId,
 });
 
 // ---------------- competency_records ----------------
@@ -296,6 +304,7 @@ export const competencyFromDb = (row, personnel) => ({
   notes: row.notes || "",
   assesseeConfirmed: row.assessee_confirmed || false,
   assesseeConfirmedAt: row.assessee_confirmed_at || "",
+  laboratoryId: row.laboratory_id,
 });
 export const competencyToDb = (c, personnel) => ({
   personnel_id: nameToId(personnel, c.personnelName),
@@ -307,6 +316,7 @@ export const competencyToDb = (c, personnel) => ({
   date: c.date || null,
   due_date: c.dueDate || null,
   notes: c.notes || null,
+  laboratory_id: c.laboratoryId,
 });
 
 // ---------------- equipment ----------------
@@ -320,6 +330,7 @@ export const equipmentFromDb = (row) => ({
   commissionDate: row.commission_date || "",
   status: row.status,
   qcMachineId: row.qc_machine_id || "",
+  laboratoryId: row.laboratory_id,
 });
 export const equipmentToDb = (e) => ({
   name: e.name,
@@ -330,6 +341,7 @@ export const equipmentToDb = (e) => ({
   commission_date: e.commissionDate || null,
   status: e.status,
   qc_machine_id: e.qcMachineId || null,
+  laboratory_id: e.laboratoryId,
 });
 
 // ---------------- equipment_records ----------------
@@ -346,6 +358,7 @@ export const equipmentRecordFromDb = (row, personnel) => ({
   notes: row.notes || "",
   url: row.url || "",
   storagePath: row.storage_path || "",
+  laboratoryId: row.laboratory_id,
 });
 export const equipmentRecordToDb = (r, personnel) => ({
   equipment_id: r.equipmentId,
@@ -359,22 +372,25 @@ export const equipmentRecordToDb = (r, personnel) => ({
   notes: r.notes || null,
   url: r.url || null,
   storage_path: r.storagePath || null,
+  laboratory_id: r.laboratoryId,
 });
 
 // ---------------- qc_machines / qc_parameters / qc_controls ----------------
-export const machineFromDb = (row) => ({ id: row.id, name: row.name, model: row.model || "", discipline: row.discipline });
-export const machineToDb = (m) => ({ name: m.name, model: m.model || null, discipline: m.discipline });
+export const machineFromDb = (row) => ({ id: row.id, name: row.name, model: row.model || "", discipline: row.discipline, laboratoryId: row.laboratory_id });
+export const machineToDb = (m) => ({ name: m.name, model: m.model || null, discipline: m.discipline, laboratory_id: m.laboratoryId });
 
-export const parameterFromDb = (row) => ({ id: row.id, machineId: row.machine_id, name: row.name, unit: row.unit || "" });
-export const parameterToDb = (p) => ({ machine_id: p.machineId, name: p.name, unit: p.unit || null });
+export const parameterFromDb = (row) => ({ id: row.id, machineId: row.machine_id, name: row.name, unit: row.unit || "", laboratoryId: row.laboratory_id });
+export const parameterToDb = (p) => ({ machine_id: p.machineId, name: p.name, unit: p.unit || null, laboratory_id: p.laboratoryId });
 
 export const controlFromDb = (row) => ({
   id: row.id, parameterId: row.parameter_id, level: row.level, lotNumber: row.lot_number || "",
   mean: Number(row.mean), sd: Number(row.sd), expiryDate: row.expiry_date || "",
+  laboratoryId: row.laboratory_id,
 });
 export const controlToDb = (c) => ({
   parameter_id: c.parameterId, level: c.level, lot_number: c.lotNumber || null,
   mean: c.mean, sd: c.sd, expiry_date: c.expiryDate || null,
+  laboratory_id: c.laboratoryId,
 });
 
 // ---------------- qc_runs ----------------
@@ -390,6 +406,7 @@ export const runFromDb = (row, personnel) => ({
   authorizedByInitials: initialsOfLocal(idToName(personnel, row.authorized_by)),
   authorizedAt: row.authorized_at || "",
   comment: row.comment || "",
+  laboratoryId: row.laboratory_id,
 });
 export const runToDb = (r, personnel) => ({
   control_id: r.controlId,
@@ -398,6 +415,7 @@ export const runToDb = (r, personnel) => ({
   value: r.value,
   operator: nameToId(personnel, r.operator),
   comment: r.comment || null,
+  laboratory_id: r.laboratoryId,
   // authorized / authorized_by / authorized_at are deliberately never sent —
   // only authorize_qc_run() (called via authorizeRun in src/api/qc.js) can set them.
 });
@@ -422,6 +440,7 @@ export const eqaFromDb = (row) => ({
   notes: row.notes || "",
   linkedNcId: row.linked_nc_id || "",
   nextCycleDate: row.next_cycle_date || "",
+  laboratoryId: row.laboratory_id,
 });
 export const eqaToDb = (e) => ({
   discipline: e.discipline,
@@ -437,6 +456,7 @@ export const eqaToDb = (e) => ({
   notes: e.notes || null,
   linked_nc_id: e.linkedNcId || null,
   next_cycle_date: e.nextCycleDate || null,
+  laboratory_id: e.laboratoryId,
 });
 
 // ---------------- documents ----------------
@@ -455,6 +475,7 @@ export const documentFromDb = (row, personnel) => ({
   isCurrent: row.is_current !== false,
   personnelName: idToName(personnel, row.personnel_id),
   nextReviewDate: row.next_review_date || "",
+  laboratoryId: row.laboratory_id,
 });
 export const documentToDb = (d, personnel) => ({
   title: d.title,
@@ -467,6 +488,7 @@ export const documentToDb = (d, personnel) => ({
   document_code: d.documentCode || null,
   personnel_id: nameToId(personnel, d.personnelName),
   next_review_date: d.nextReviewDate || null,
+  laboratory_id: d.laboratoryId,
 });
 
 // ---------------- document_acknowledgments ----------------
@@ -475,4 +497,5 @@ export const acknowledgmentFromDb = (row, personnel) => ({
   documentId: row.document_id,
   personnelName: idToName(personnel, row.personnel_id),
   acknowledgedAt: row.acknowledged_at,
+  laboratoryId: row.laboratory_id,
 });

@@ -705,7 +705,7 @@ export default function App() {
 
   /** Management reviews are create/delete only — a review record is a dated snapshot, not something edited after the fact. */
   const addManagementReview = async (draft) => {
-    const dbRow = managementReviewToDb({ ...draft, conductedBy: currentUser.name }, personnel);
+    const dbRow = managementReviewToDb({ ...draft, conductedBy: currentUser.name, laboratoryId: activeLaboratoryId }, personnel);
     const inserted = await mgmtReviewApi.createManagementReview(dbRow);
     const mapped = managementReviewFromDb(inserted, personnel);
     setManagementReviews(prev => [mapped, ...prev]);
@@ -721,11 +721,11 @@ export default function App() {
     const myPersonnel = personnel.find(p => p.id === currentUser.id || p.name === currentUser.name);
     if (!myPersonnel) return;
     try {
-      await ackApi.acknowledgeDocument(documentId, myPersonnel.id);
+      await ackApi.acknowledgeDocument(documentId, myPersonnel.id, activeLaboratoryId);
       setDocumentAcknowledgments(prev => {
         const already = prev.some(a => a.documentId === documentId && a.personnelName === myPersonnel.name);
         if (already) return prev;
-        return [...prev, { id: uid(), documentId, personnelName: myPersonnel.name, acknowledgedAt: new Date().toISOString() }];
+        return [...prev, { id: uid(), documentId, personnelName: myPersonnel.name, acknowledgedAt: new Date().toISOString(), laboratoryId: activeLaboratoryId }];
       });
     } catch (e) {
       alert("Could not record acknowledgment.\n\n" + e.message);
@@ -735,7 +735,7 @@ export default function App() {
   /** Reporting downtime automatically marks the equipment Out of service server-side (0012 trigger) — reflected here so the UI doesn't need a separate round trip. */
   const reportDowntimeAction = async (equipmentId, reason) => {
     try {
-      const row = await downtimeApi.reportDowntime({ equipment_id: equipmentId, reason, reported_by: nameToId(personnel, currentUser.name) });
+      const row = await downtimeApi.reportDowntime({ equipment_id: equipmentId, reason, reported_by: nameToId(personnel, currentUser.name), laboratory_id: activeLaboratoryId });
       setEquipmentDowntime(prev => [downtimeFromDb(row, personnel), ...prev]);
       setEquipment(prev => prev.map(e => e.id === equipmentId ? { ...e, status: "Out of service" } : e));
     } catch (e) {
@@ -755,7 +755,7 @@ export default function App() {
 
   const addClauseEvidenceAction = async (clauseId, documentId) => {
     try {
-      const row = await clauseEvidenceApi.addClauseEvidence(clauseId, documentId, nameToId(personnel, currentUser.name));
+      const row = await clauseEvidenceApi.addClauseEvidence(clauseId, documentId, nameToId(personnel, currentUser.name), activeLaboratoryId);
       setClauseEvidence(prev => [...prev, clauseEvidenceFromDb(row, personnel)]);
     } catch (e) {
       alert("Could not link this document.\n\n" + e.message);
@@ -820,7 +820,7 @@ export default function App() {
 
   const addTaskCommentAction = async (taskId, comment) => {
     try {
-      const row = await taskCommentsApi.addTaskComment(taskId, nameToId(personnel, currentUser.name), comment);
+      const row = await taskCommentsApi.addTaskComment(taskId, nameToId(personnel, currentUser.name), comment, activeLaboratoryId);
       setTaskComments(prev => [...prev, taskCommentFromDb(row, personnel)]);
     } catch (e) {
       alert("Could not add comment.\n\n" + e.message);
@@ -844,6 +844,7 @@ export default function App() {
         is_recurring: template.isRecurring || false,
         recurrence_interval_days: template.recurrenceIntervalDays || null,
         created_by: nameToId(personnel, currentUser.name),
+        laboratory_id: activeLaboratoryId,
       });
       setTaskTemplates(prev => [...prev, taskTemplateFromDb(row, personnel)]);
     } catch (e) {
@@ -878,7 +879,7 @@ export default function App() {
    * session immediately — shows the new version as current.
    */
   const publishControlledDocumentAction = async (draft) => {
-    const dbRow = documentToDb({ ...draft, uploadedBy: currentUser.name }, personnel);
+    const dbRow = documentToDb({ ...draft, uploadedBy: currentUser.name, laboratoryId: activeLaboratoryId }, personnel);
     const inserted = await eqaDocApi.publishControlledDocument(dbRow);
     const mapped = documentFromDb(inserted, personnel);
     setDocuments(prev => [
@@ -1091,25 +1092,25 @@ export default function App() {
           taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction}
           notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} />}
-        {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} />}
+        {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "iqc" && <IQCPage qcMachines={qcMachines} updateQcMachines={updateQcMachines}
           qcParameters={qcParameters} updateQcParameters={updateQcParameters}
           qcControls={qcControls} updateQcControls={updateQcControls}
           qcRuns={qcRuns} updateQcRuns={updateQcRuns} personnel={personnel}
           canEdit={canEdit} canAuthorizeIQC={canAuthorizeIQC} currentUser={currentUser}
           authorizeQcRunAction={authorizeQcRunAction} bulkImportQcRuns={bulkImportQcRuns}
-          equipment={equipment} updateEquipment={updateEquipment} />}
+          equipment={equipment} updateEquipment={updateEquipment} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit}
-          ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} />}
-        {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} currentUser={currentUser} confirmCompetencyAssessmentAction={confirmCompetencyAssessmentAction} />}
+          ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} activeLaboratoryId={activeLaboratoryId} />}
+        {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} currentUser={currentUser} confirmCompetencyAssessmentAction={confirmCompetencyAssessmentAction} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "equipment" && <Equipment equipment={equipment} updateEquipment={updateEquipment}
           equipmentRecords={equipmentRecords} updateEquipmentRecords={updateEquipmentRecords} personnel={personnel} canEdit={canEdit}
           equipmentDowntime={equipmentDowntime} reportDowntimeAction={reportDowntimeAction} resolveDowntimeAction={resolveDowntimeAction}
-          qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} qcRuns={qcRuns} />}
+          qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} qcRuns={qcRuns} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "documents" && <Documents documents={documents} updateDocuments={updateDocuments} personnel={personnel}
           currentUser={currentUser} canEdit={canEdit} canPublishControlledDocs={canPublishControlledDocs}
           publishControlledDocumentAction={publishControlledDocumentAction}
-          documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} />}
+          documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canEdit={canEdit}
           laboratories={laboratories} personnelLaboratories={personnelLaboratories} assignPersonnelToLabAction={assignPersonnelToLabAction} unassignPersonnelFromLabAction={unassignPersonnelFromLabAction} />}
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} addManagementReview={addManagementReview}
@@ -1117,7 +1118,7 @@ export default function App() {
         {tab === "audit" && canSeeAuditBackup && <AuditBackup />}
         {tab === "settings" && isAdmin && <Settings qcMachines={qcMachines} currentUser={currentUser}
           notificationSettings={notificationSettings} toggleNotificationSettingAction={toggleNotificationSettingAction}
-          laboratories={laboratories} createLaboratoryAction={createLaboratoryAction} />}
+          laboratories={laboratories} createLaboratoryAction={createLaboratoryAction} activeLaboratoryId={activeLaboratoryId} />}
       </div>
     </div>
   );
@@ -2212,6 +2213,7 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
   const [recordCardNumber, setRecordCardNumber] = useState("");
   const [password, setPassword] = useState("");
   const [accessRole, setAccessRole] = useState("Technologist");
+  const [newStaffLabId, setNewStaffLabId] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [rowDrafts, setRowDrafts] = useState({}); // { [personnelId]: { role?, email?, recordCardNumber?, accessRole? } } — only fields with a pending, unsaved edit
@@ -2236,9 +2238,13 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
       setCreateError("Name, record card number, and a password of at least 6 characters are required.");
       return;
     }
+    if (!newStaffLabId) {
+      setCreateError("Select a primary laboratory for this staff member.");
+      return;
+    }
     setCreating(true); setCreateError("");
     try {
-      const created = await adminCreateStaff({ name, jobTitle: role, email, recordCardNumber, password, accessRole });
+      const created = await adminCreateStaff({ name, jobTitle: role, email, recordCardNumber, password, accessRole, laboratoryId: newStaffLabId });
       setPersonnel([...personnel, personnelFromDb(created)]);
       setName(""); setRole(""); setEmail(""); setRecordCardNumber(""); setPassword(""); setAccessRole("Technologist");
     } catch (e) {
@@ -2265,6 +2271,7 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
       const id = cellGet(row, "ID", "Id", "id");
       const rName = cellGet(row, "Name", "name");
       if (!rName) return;
+      const labName = cellGet(row, "Laboratory", "laboratory");
       const common = {
         name: rName,
         role: cellGet(row, "Role", "role"),
@@ -2273,12 +2280,13 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
         accessRole: cellGet(row, "Access Role", "AccessRole", "accessRole") || "Technologist",
       };
       if (id && existingById[id]) toUpdate.push({ ...existingById[id], ...common });
-      else toCreate.push({ ...common, password: cellGet(row, "Password", "password") });
+      else toCreate.push({ ...common, password: cellGet(row, "Password", "password"), laboratoryId: laboratories.find(l => l.name === labName)?.id || "" });
     });
 
     let created = 0, failed = [];
     for (const draft of toCreate) {
       if (!draft.password || draft.password.length < 6) { failed.push(`${draft.name} (no valid password)`); continue; }
+      if (!draft.laboratoryId) { failed.push(`${draft.name} (Laboratory column missing or doesn't match an existing lab name)`); continue; }
       try {
         const person = await adminCreateStaff(draft);
         setPersonnel(prev => [...prev, personnelFromDb(person)]);
@@ -2302,7 +2310,7 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
 
       <ImportExportBar
         label="staff list"
-        templateRows={personnel.map(p => ({ ID: p.id, Name: p.name, Role: p.role, Email: p.email, "Record Card Number": p.recordCardNumber, Password: p.password, "Access Role": p.accessRole }))}
+        templateRows={personnel.map(p => ({ ID: p.id, Name: p.name, Role: p.role, Email: p.email, "Record Card Number": p.recordCardNumber, Password: p.password, "Access Role": p.accessRole, Laboratory: laboratories.find(l => l.id === p.laboratoryId)?.name || "" }))}
         sheetName="Personnel" filenameBase="lab-personnel" onImportRows={handleImport} canImport={isAdmin}
       />
       <p className="text-xs text-gray-400 -mt-2 mb-4">Download, edit in Excel, then re-import — rows with a matching ID update that person's details; new rows (blank ID, with a Password filled in) create a real login. Record Card Number becomes their username.</p>
@@ -2319,6 +2327,12 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
             <Field label="Access role / authorisation level">
               <select className={inputCls} style={inputStyle} value={accessRole} onChange={e => setAccessRole(e.target.value)}>
                 {ROLES.map(r => <option key={r}>{r}</option>)}
+              </select>
+            </Field>
+            <Field label="Primary laboratory">
+              <select className={inputCls} style={inputStyle} value={newStaffLabId} onChange={e => setNewStaffLabId(e.target.value)}>
+                <option value="">Select a laboratory…</option>
+                {laboratories.map(lab => <option key={lab.id} value={lab.id}>{lab.name}</option>)}
               </select>
             </Field>
           </div>
@@ -2451,13 +2465,13 @@ function ResetPasswordControl({ personnelId }) {
 const RISK_LEVEL_COLOR = { Critical: COLORS.red, High: COLORS.red, Medium: COLORS.amber, Low: COLORS.teal };
 const RISK_CATEGORIES = ["Pre-examination", "Examination", "Post-examination", "IT / Data", "Facilities", "Personnel", "Equipment", "Supply chain", "Other"];
 
-function RiskRegister({ risks, updateRisks, personnel, canEdit }) {
+function RiskRegister({ risks, updateRisks, personnel, canEdit, activeLaboratoryId }) {
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [filterStatus, setFilterStatus] = useState("All");
 
   const addRisk = (draft) => {
-    updateRisks([{ id: uid(), status: "Open", identifiedDate: todayISO(), mitigation: "", ...draft }, ...risks]);
+    updateRisks([{ id: uid(), status: "Open", identifiedDate: todayISO(), mitigation: "", laboratoryId: activeLaboratoryId, ...draft }, ...risks]);
     setShowForm(false);
   };
   const setRisk = (id, patch) => updateRisks(risks.map(r => r.id === id ? { ...r, ...patch } : r));
@@ -2609,14 +2623,14 @@ function RiskForm({ personnel, onSave, onCancel }) {
   );
 }
 
-function Competency({ competency, updateCompetency, personnel, canEdit, currentUser, confirmCompetencyAssessmentAction }) {
+function Competency({ competency, updateCompetency, personnel, canEdit, currentUser, confirmCompetencyAssessmentAction, activeLaboratoryId }) {
   const [showForm, setShowForm] = useState(false);
   const [filterPerson, setFilterPerson] = useState("All");
   const [filterType, setFilterType] = useState("All");
   const [view, setView] = useState("list");
 
   const addRecord = (draft) => {
-    updateCompetency([{ id: uid(), createdAt: todayISO(), ...draft }, ...competency]);
+    updateCompetency([{ id: uid(), createdAt: todayISO(), laboratoryId: activeLaboratoryId, ...draft }, ...competency]);
     setShowForm(false);
   };
   const setRecord = (id, patch) => updateCompetency(competency.map(c => c.id === id ? { ...c, ...patch } : c));
@@ -2801,7 +2815,7 @@ function CompetencyForm({ personnel, existingTitles, onSave, onCancel }) {
 }
 
 // ---------------- Equipment & Records (Clauses 6.3 / 6.4: IQ, OQ, PQ, calibration, maintenance) ----------------
-function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipmentRecords, personnel, canEdit, equipmentDowntime, reportDowntimeAction, resolveDowntimeAction, qcMachines, qcParameters, qcControls, qcRuns }) {
+function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipmentRecords, personnel, canEdit, equipmentDowntime, reportDowntimeAction, resolveDowntimeAction, qcMachines, qcParameters, qcControls, qcRuns, activeLaboratoryId }) {
   const [showEquipForm, setShowEquipForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [recordDraftFor, setRecordDraftFor] = useState(null);
@@ -2810,7 +2824,7 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
   const [showDowntimeFormFor, setShowDowntimeFormFor] = useState(null);
 
   const addEquipment = (draft) => {
-    updateEquipment([{ id: uid(), status: "In service", ...draft }, ...equipment]);
+    updateEquipment([{ id: uid(), status: "In service", laboratoryId: activeLaboratoryId, ...draft }, ...equipment]);
     setShowEquipForm(false);
   };
   const setEquip = (id, patch) => updateEquipment(equipment.map(e => e.id === id ? { ...e, ...patch } : e));
@@ -2820,7 +2834,7 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
   };
 
   const addRecord = (equipmentId, draft) => {
-    updateEquipmentRecords([{ id: uid(), equipmentId, createdAt: todayISO(), ...draft }, ...equipmentRecords]);
+    updateEquipmentRecords([{ id: uid(), equipmentId, createdAt: todayISO(), laboratoryId: activeLaboratoryId, ...draft }, ...equipmentRecords]);
     setRecordDraftFor(null);
   };
   const removeRecord = (id) => updateEquipmentRecords(equipmentRecords.filter(r => r.id !== id));
@@ -2869,7 +2883,7 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
       };
       const idx = id ? next.findIndex(e => e.id === id) : -1;
       if (idx >= 0) next[idx] = { ...next[idx], ...rec };
-      else next.push({ id: uid(), ...rec });
+      else next.push({ id: uid(), laboratoryId: activeLaboratoryId, ...rec });
       count++;
     });
     updateEquipment(next);
@@ -3189,7 +3203,7 @@ function AuthorizeControl({ run, currentUser, canAuthorize, onAuthorize }) {
 }
 
 // ---------------- IQC & Levey-Jennings (Clause 7.3.7 Quality control) ----------------
-function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns, equipment, updateEquipment }) {
+function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns, equipment, updateEquipment, activeLaboratoryId }) {
   const [showMachineForm, setShowMachineForm] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [selectedMachineId, setSelectedMachineId] = useState(qcMachines[0]?.id || null);
@@ -3219,7 +3233,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
    */
   const addMachine = async (draft) => {
     const { linkedEquipmentId, ...machineDraft } = draft;
-    const syncedMachines = await updateQcMachines([{ id: uid(), ...machineDraft }, ...qcMachines]);
+    const syncedMachines = await updateQcMachines([{ id: uid(), laboratoryId: activeLaboratoryId, ...machineDraft }, ...qcMachines]);
     setShowMachineForm(false);
     if (!syncedMachines || !linkedEquipmentId) return;
     const createdMachine = syncedMachines.find(m => m.name === machineDraft.name);
@@ -3237,7 +3251,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
     if (selectedMachineId === id) setSelectedMachineId(null);
   };
 
-  const addParameter = (draft) => { updateQcParameters([{ id: uid(), machineId: selectedMachineId, ...draft }, ...qcParameters]); setShowParamForm(false); };
+  const addParameter = (draft) => { updateQcParameters([{ id: uid(), machineId: selectedMachineId, laboratoryId: activeLaboratoryId, ...draft }, ...qcParameters]); setShowParamForm(false); };
   const removeParameter = (id) => {
     updateQcParameters(qcParameters.filter(p => p.id !== id));
     const controlIds = qcControls.filter(c => c.parameterId === id).map(c => c.id);
@@ -3245,12 +3259,12 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
     updateQcRuns(qcRuns.filter(r => !controlIds.includes(r.controlId)));
   };
 
-  const addControl = (parameterId, draft) => { updateQcControls([{ id: uid(), parameterId, ...draft }, ...qcControls]); setControlFormFor(null); };
+  const addControl = (parameterId, draft) => { updateQcControls([{ id: uid(), parameterId, laboratoryId: activeLaboratoryId, ...draft }, ...qcControls]); setControlFormFor(null); };
   const removeControl = (id) => { updateQcControls(qcControls.filter(c => c.id !== id)); updateQcRuns(qcRuns.filter(r => r.controlId !== id)); };
 
-  const addRun = (controlId, draft) => { updateQcRuns([{ id: uid(), controlId, authorized: false, ...draft }, ...qcRuns]); setRunFormFor(null); };
+  const addRun = (controlId, draft) => { updateQcRuns([{ id: uid(), controlId, authorized: false, laboratoryId: activeLaboratoryId, ...draft }, ...qcRuns]); setRunFormFor(null); };
   const addRunsBatch = (entries) => {
-    const newRuns = entries.map(e => ({ id: uid(), controlId: e.controlId, authorized: false, ...e.draft }));
+    const newRuns = entries.map(e => ({ id: uid(), controlId: e.controlId, authorized: false, laboratoryId: activeLaboratoryId, ...e.draft }));
     updateQcRuns([...newRuns, ...qcRuns]);
   };
   const removeRun = (id) => updateQcRuns(qcRuns.filter(r => r.id !== id));
@@ -3386,7 +3400,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
       const rec = { name: rName, discipline: cellGet(row, "Discipline", "discipline") || DISCIPLINES[0], model: cellGet(row, "Model", "model") };
       const idx = id ? next.findIndex(m => m.id === id) : -1;
       if (idx >= 0) next[idx] = { ...next[idx], ...rec };
-      else next.push({ id: uid(), ...rec });
+      else next.push({ id: uid(), laboratoryId: activeLaboratoryId, ...rec });
       count++;
     });
     updateQcMachines(next);
@@ -3441,7 +3455,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
       {showCsvImport && canEdit && (
         <IQCCsvImport
           qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} personnel={personnel}
-          onImport={bulkImportQcRuns} onClose={() => setShowCsvImport(false)}
+          onImport={bulkImportQcRuns} onClose={() => setShowCsvImport(false)} activeLaboratoryId={activeLaboratoryId}
         />
       )}
 
@@ -3787,7 +3801,7 @@ function DailyIQCEntry({ parameters, controls, personnel, onSaveBatch, onClose }
 }
 
 // ---------------- Bulk CSV import for IQC results (any mix of parameters/machines) ----------------
-function IQCCsvImport({ qcMachines, qcParameters, qcControls, personnel, onImport, onClose }) {
+function IQCCsvImport({ qcMachines, qcParameters, qcControls, personnel, onImport, onClose, activeLaboratoryId }) {
   const fileRef = useRef(null);
   const [rows, setRows] = useState([]);
   const [fileName, setFileName] = useState("");
@@ -3871,6 +3885,7 @@ function IQCCsvImport({ qcMachines, qcParameters, qcControls, personnel, onImpor
         value: r.value,
         operator: nameToId(personnel, r.operator),
         comment: r.comment || null,
+        laboratory_id: activeLaboratoryId,
       })));
       setResultMsg(`Imported ${count} result${count !== 1 ? "s" : ""}.${errorRows.length ? ` ${errorRows.length} row(s) skipped — see below.` : ""}`);
       setRows(errorRows); // keep only the failed rows visible so they can be fixed and re-tried
@@ -4095,7 +4110,7 @@ function RunForm({ controls, personnel, onSave, onCancel }) {
 }
 
 // ---------------- EQAS (Clause 7.3.7.3 External Quality Assessment) ----------------
-function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction }) {
+function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction, activeLaboratoryId }) {
   const [showForm, setShowForm] = useState(false);
   const [filterDiscipline, setFilterDiscipline] = useState("All");
   const [showTrends, setShowTrends] = useState(false);
@@ -4106,7 +4121,7 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
       const sdi = draft.peerMean !== "" && draft.peerSD && draft.peerSD !== "0"
         ? (parseFloat(draft.labResult) - parseFloat(draft.peerMean)) / parseFloat(draft.peerSD) : null;
       const evaluation = sdi === null ? "Not yet received" : Math.abs(sdi) <= 2 ? "Satisfactory" : Math.abs(sdi) <= 3 ? "Marginal" : "Unsatisfactory";
-      return { id: uid(), ...draft, sdi, evaluation };
+      return { id: uid(), laboratoryId: activeLaboratoryId, ...draft, sdi, evaluation };
     });
     updateEqaEvents([...newEvents, ...eqaEvents]);
     setShowForm(false);
@@ -4473,7 +4488,7 @@ function DocumentLink({ title, url, storagePath, className }) {
   );
 }
 
-function Documents({ documents, updateDocuments, personnel, currentUser, canEdit, canPublishControlledDocs, publishControlledDocumentAction, documentAcknowledgments, acknowledgeDocumentAction }) {
+function Documents({ documents, updateDocuments, personnel, currentUser, canEdit, canPublishControlledDocs, publishControlledDocumentAction, documentAcknowledgments, acknowledgeDocumentAction, activeLaboratoryId }) {
   const [section, setSection] = useState("controlled");
   const [showControlledForm, setShowControlledForm] = useState(false);
   const [showPersonalForm, setShowPersonalForm] = useState(false);
@@ -4579,11 +4594,11 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
     }
   };
   const addPersonal = (draft) => {
-    updateDocuments([{ id: uid(), uploadedBy: currentUser.name, uploadedAt: todayISO(), ...draft }, ...documents]);
+    updateDocuments([{ id: uid(), uploadedBy: currentUser.name, uploadedAt: todayISO(), laboratoryId: activeLaboratoryId, ...draft }, ...documents]);
     setShowPersonalForm(false);
   };
   const addGeneral = (draft) => {
-    updateDocuments([{ id: uid(), uploadedBy: currentUser.name, uploadedAt: todayISO(), ...draft }, ...documents]);
+    updateDocuments([{ id: uid(), uploadedBy: currentUser.name, uploadedAt: todayISO(), laboratoryId: activeLaboratoryId, ...draft }, ...documents]);
     setShowGeneralForm(false);
   };
 
@@ -5314,7 +5329,7 @@ function AuditBackup() {
 }
 
 // ---------------- Settings (Admin only) ----------------
-function Settings({ qcMachines, currentUser, notificationSettings, toggleNotificationSettingAction, laboratories, createLaboratoryAction }) {
+function Settings({ qcMachines, currentUser, notificationSettings, toggleNotificationSettingAction, laboratories, createLaboratoryAction, activeLaboratoryId }) {
   const [newLabName, setNewLabName] = useState("");
   const [creatingLab, setCreatingLab] = useState(false);
   const [labError, setLabError] = useState("");
@@ -5376,7 +5391,7 @@ function Settings({ qcMachines, currentUser, notificationSettings, toggleNotific
     if (!label.trim()) return;
     setCreating(true); setCreateError("");
     try {
-      const result = await machineKeysApi.createMachineApiKey(label.trim(), restrictToMachine);
+      const result = await machineKeysApi.createMachineApiKey(label.trim(), restrictToMachine, activeLaboratoryId);
       setJustCreatedKey(result);
       setLabel(""); setRestrictToMachine(""); setShowCreateForm(false);
       await loadKeys();

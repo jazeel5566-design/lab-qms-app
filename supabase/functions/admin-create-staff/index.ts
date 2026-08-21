@@ -76,9 +76,12 @@ Deno.serve(async (req) => {
     }
 
     const body = await req.json();
-    const { name, jobTitle, email, recordCardNumber, password, accessRole } = body;
+    const { name, jobTitle, email, recordCardNumber, password, accessRole, laboratoryId } = body;
     if (!name || !recordCardNumber || !password || !accessRole) {
       return json({ error: "name, recordCardNumber, password, and accessRole are required" }, 400);
+    }
+    if (!laboratoryId) {
+      return json({ error: "laboratoryId is required — select a primary laboratory for this staff member." }, 400);
     }
 
     const validRoles = ["Admin", "Deputy Admin", "QA Manager", "Deputy QA Manager", "Technologist", "Viewer"];
@@ -106,6 +109,7 @@ Deno.serve(async (req) => {
         email: email || null,
         record_card_number: recordCardNumber.trim(),
         access_role: accessRole,
+        laboratory_id: laboratoryId,
       })
       .select()
       .single();

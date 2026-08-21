@@ -73,13 +73,18 @@ serve(async (req) => {
   }
 
   let machineId: string | null = null;
+  let laboratoryId: string | null = keyRow.laboratory_id ?? null;
   if (machineName) {
-    const { data: machine } = await admin.from("qc_machines").select("id").ilike("name", machineName).single();
+    const { data: machine } = await admin.from("qc_machines").select("id, laboratory_id").ilike("name", machineName).single();
     if (!machine) return jsonError(`No QC machine found matching "${machineName}"`, 404);
     machineId = machine.id;
+    if (machine.laboratory_id) laboratoryId = machine.laboratory_id; // the specific machine's lab takes precedence over the key's own
     if (keyRow.qc_machine_id && keyRow.qc_machine_id !== machineId) {
       return jsonError("This API key is not authorized to submit results for that machine", 403);
     }
+  }
+  if (!laboratoryId) {
+    return jsonError("Could not determine which laboratory this result belongs to — this API key has no laboratory assigned and no machineName was given.", 400);
   }
 
   const hasPeerStats = peerMean !== undefined && peerMean !== null && peerSD !== undefined && peerSD !== null && Number(peerSD) !== 0;
@@ -103,6 +108,7 @@ serve(async (req) => {
       // any attempt to write to it directly, even with the correct value.
       evaluation,
       notes: `Received via machine interface (key: ${keyRow.label})`,
+      laboratory_id: laboratoryId,
     })
     .select()
     .single();

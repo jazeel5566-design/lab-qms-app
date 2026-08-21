@@ -41,9 +41,24 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: "Only Admin can create API keys" }), { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const { label, qcMachineId } = await req.json();
+    const { label, qcMachineId, laboratoryId } = await req.json();
     if (!label) {
       return new Response(JSON.stringify({ error: "A label is required" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // laboratory_id is required on machine_api_keys (0025 migration). If this
+    // key is restricted to a specific machine, that machine's own lab is the
+    // more correct source of truth than whichever lab the admin happened to
+    // have active — a key for a Hematology analyser should belong to
+    // Hematology even if the admin created it while viewing Biochemistry.
+    // Falls back to the admin's active lab only for an unrestricted key.
+    let resolvedLabId = laboratoryId || null;
+    if (qcMachineId) {
+      const { data: machine } = await admin.from("qc_machines").select("laboratory_id").eq("id", qcMachineId).single();
+      if (machine?.laboratory_id) resolvedLabId = machine.laboratory_id;
+    }
+    if (!resolvedLabId) {
+      return new Response(JSON.stringify({ error: "Could not determine which laboratory this key belongs to — select a machine or an active laboratory first." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
     const plainKey = "lqms_" + crypto.randomUUID().replace(/-/g, "");
@@ -52,7 +67,7 @@ serve(async (req) => {
 
     const { data: row, error } = await admin
       .from("machine_api_keys")
-      .insert({ label, key_hash: keyHash, key_prefix: keyPrefix, qc_machine_id: qcMachineId || null, created_by: person.id })
+      .insert({ label, key_hash: keyHash, key_prefix: keyPrefix, qc_machine_id: qcMachineId || null, created_by: person.id, laboratory_id: resolvedLabId })
       .select()
       .single();
 

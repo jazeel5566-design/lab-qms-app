@@ -7,8 +7,8 @@ export async function listMachineApiKeys() {
 }
 
 /** Calls the create-api-key Edge Function — returns { id, plainKey, keyPrefix }. plainKey is shown exactly once and never recoverable afterward. */
-export async function createMachineApiKey(label, qcMachineId) {
-  const { data, error } = await supabase.functions.invoke("create-api-key", { body: { label, qcMachineId: qcMachineId || null } });
+export async function createMachineApiKey(label, qcMachineId, laboratoryId) {
+  const { data, error } = await supabase.functions.invoke("create-api-key", { body: { label, qcMachineId: qcMachineId || null, laboratoryId: laboratoryId || null } });
   if (error) throw new Error(error.message);
   if (data?.error) throw new Error(data.error);
   return data;
