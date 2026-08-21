@@ -5,60 +5,56 @@ This zip is a **complete, self-contained copy of the entire app** —
 config files, everything. Unzip this anywhere for a full working copy of
 the project, independent of any other zip you've received.
 
-## What changed in THIS update: reads now actually filter by the ACTIVE lab
+## What changed in THIS update: Personnel page visibility restricted
 
-This is a significant fix. Previously, only `clause_status`, `tasks`, and
-`nonconformities` were fetched filtered to the currently-selected lab.
-Every other module — competency, equipment, equipment records, QC
-machines/parameters/controls/runs, EQA events, documents, risks,
-management reviews, document acknowledgments, equipment downtime, clause
-evidence, task comments, task templates — relied purely on RLS, which
-restricts by *every lab a user can access*, not the *one lab they
-currently have selected*.
+Previously, **any** logged-in user could see every staff member's full
+row on the Personnel page (name, job title, email, record card number,
+access role) — only the ability to *edit* was restricted to Admin. Now:
 
-**Practical effect before this fix:** RLS was working correctly (no
-security gap), but for anyone with access to more than one lab — every
-Admin, and any QA Manager–style multi-lab user — every one of those
-modules would silently show **all their labs' data mixed together**,
-regardless of which lab was selected in the lab switcher. A Technologist
-with only one lab wouldn't have noticed, but an Admin switching to
-"Hematology" would still see Biochemistry's equipment, QC runs, documents,
-etc. sitting right alongside it.
+- **Admin** — sees and can edit the full staff roster (unchanged)
+- **QA Manager** — sees the full staff roster, read-only (unchanged
+  visual style, now properly gated rather than open to everyone)
+- **Everyone else** (Technologist, Viewer, etc.) — sees **only their own
+  record**, with self-service controls to change their own contact email
+  and their own password. They can no longer see anyone else's details,
+  and CSV export/import of the staff list is also now restricted to
+  Admin/QA Manager only (previously anyone could download the full
+  roster).
 
-**Fixed:** 11 API files (`operations.js`, `qc.js`, `eqaAndDocuments.js`,
-`risks.js`, `managementReviews.js`, `documentAcknowledgments.js`,
-`equipmentDowntime.js`, `clauseEvidence.js`, `taskComments.js`,
-`taskTemplates.js`) — every `list*` function now accepts an optional
-`laboratoryId` parameter and filters with `.eq("laboratory_id", ...)`
-when provided. `App.jsx`'s `loadLabScopedData()` — the single function
-that loads everything after login or a lab switch — now passes the
-active lab's ID through to all of them, closing the gap completely.
+**New database function (`0031`):** `update_my_email(new_email)` — a
+narrow, `SECURITY DEFINER` RPC that lets a signed-in user update *only*
+their own `email` column. This is deliberately NOT a broad "update your
+own personnel row" RLS policy — that would also let a Technologist change
+their own `access_role` to `'Admin'`, their `laboratory_id`, or their
+`record_card_number` (username) directly via the client. Password
+changes need no new backend at all — `supabase.auth.updateUser({
+password })` already lets a signed-in user change their own password via
+Supabase Auth directly, entirely separate from the personnel table.
 
-`notification_settings` was deliberately left unfiltered — it holds
-global on/off toggles for email notification types (e.g. "task overdue"),
-which is an Admin-only, system-wide setting rather than per-lab
-operational data.
+**Frontend (`src/App.jsx`, `src/api/personnel.js`):** new `MyProfileCard`
+and `MyPasswordControl` components render for anyone without full-roster
+visibility. Record card number, access role, and lab assignment are shown
+read-only with a note that only an Admin can change them.
 
 ## Full history of today's laboratory_id work
 
-**Database (`0025`–`0030`):** organizations/labs built, 5 real labs
+**Database (`0025`–`0031`):** organizations/labs built, 5 real labs
 created, lab isolation enforced via RLS (with a caught-and-remediated
-regression at `0027`→`0028`, and a `SECURITY DEFINER` fix in `0030`).
+regression at `0027`→`0028`, a `SECURITY DEFINER` fix in `0030`), and now
+safe self-service email updates in `0031`.
 
 **Write side:** every create/insert path across the app and 4 edge
 functions correctly supplies `laboratory_id`.
 
-**Read side (this update):** every list/fetch now correctly filters by
-the active lab, not just whatever RLS happens to allow through.
+**Read side:** every list/fetch correctly filters by the active lab.
 
 **Admin tooling:** create labs, create staff with a required primary lab,
-reassign anyone's primary lab afterward, grant multi-lab access — plus a
-layout fix on the Personnel page.
+reassign anyone's primary lab, grant multi-lab access, restricted staff
+visibility to Admin/QA Manager with self-service for everyone else.
 
 **Process note:** a brace/paren/bracket balance check against the
-original file is now standard after any multi-edit pass — it caught one
-real self-inflicted syntax break earlier today before it reached
-production.
+original file is standard after any multi-edit pass — it caught one real
+self-inflicted syntax break earlier today before it reached production.
 
 ## Full status: database (all confirmed live on `itcmqmwcrwwxyhtznack`)
 
@@ -69,22 +65,22 @@ production.
 - `0029` — removed the organizations layer, flat `laboratories` design
 - `0030` — lab isolation enforced via RESTRICTIVE policies (includes the
   `SECURITY DEFINER` fix for `has_lab_access()`, confirmed working)
+- `0031` — `update_my_email()` self-service RPC, confirmed working
 
 ## Deploy instructions for THIS update
 
-1. **Run on Supabase?** No — no database changes.
-2. **Upload to GitHub?** Yes — `src/App.jsx` plus 10 files in `src/api/`
-   (`operations.js`, `qc.js`, `eqaAndDocuments.js`, `risks.js`,
-   `managementReviews.js`, `documentAcknowledgments.js`,
-   `equipmentDowntime.js`, `clauseEvidence.js`, `taskComments.js`,
-   `taskTemplates.js`). Safest to unzip the whole package over your repo.
+1. **Run on Supabase?** Already done — `0031` was run and confirmed
+   during this session. Nothing further to run.
+2. **Upload to GitHub?** Yes — `src/App.jsx`, `src/api/personnel.js`, and
+   `supabase/migrations/0031_self_service_email_update.sql`.
 3. **Redeploy on Vercel?** Yes — `src/` changed.
-4. **Test live?** ✅ Important this time — log in as **Admin** specifically
-   (the account that can see all 5 labs), switch between labs using the
-   lab switcher, and confirm Equipment, QC, Documents, Risks, EQA, and
-   Competency each show *only* the currently selected lab's data — not
-   everything mixed together. This is the actual bug this update fixes,
-   so it's worth verifying directly rather than assuming.
+4. **Test live?** Log in as your Technologist test account and confirm:
+   - The Personnel page now shows only their own record, not the full list
+   - They can update their own contact email and see it save successfully
+   - They can change their own password via the new control
+   Then log in as QA Manager and confirm they see the full roster
+   read-only (no edit controls), and as Admin to confirm nothing changed
+   for that role.
 
 ## Next step
 
@@ -92,6 +88,7 @@ Reassign your existing personnel out of Biochemistry into their correct
 labs via the Personnel page, then do a full walkthrough as a Technologist
 in one lab and confirm they only ever see that lab's data anywhere in the
 app.
+
 
 
 

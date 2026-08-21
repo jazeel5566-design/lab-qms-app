@@ -989,6 +989,8 @@ export default function App() {
   const canManageClauseStatus = TASK_ASSIGNER_ROLES.includes(currentUser.role);
   const canPublishControlledDocs = DOCUMENT_PUBLISHER_ROLES.includes(currentUser.role);
   const canSeeAuditBackup = isAdmin || isQaManager;
+  /** Only Admin and QA Manager can browse the full staff roster — everyone else only ever sees their own record on the Personnel page. */
+  const canSeeAllStaff = isAdmin || isQaManager;
 
   const NAV = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -1111,7 +1113,7 @@ export default function App() {
           currentUser={currentUser} canEdit={canEdit} canPublishControlledDocs={canPublishControlledDocs}
           publishControlledDocumentAction={publishControlledDocumentAction}
           documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} activeLaboratoryId={activeLaboratoryId} />}
-        {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canEdit={canEdit}
+        {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canSeeAllStaff={canSeeAllStaff} canEdit={canEdit}
           laboratories={laboratories} personnelLaboratories={personnelLaboratories} assignPersonnelToLabAction={assignPersonnelToLabAction} unassignPersonnelFromLabAction={unassignPersonnelFromLabAction} />}
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} addManagementReview={addManagementReview}
           deleteManagementReview={deleteManagementReview} stats={stats} currentUser={currentUser} />}
@@ -2206,7 +2208,7 @@ function NcForm({ personnel, existingNcs, onCancel, onSave }) {
 }
 
 // ---------------- Personnel ----------------
-function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAdmin, canEdit, laboratories, personnelLaboratories, assignPersonnelToLabAction, unassignPersonnelFromLabAction }) {
+function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAdmin, canSeeAllStaff, canEdit, laboratories, personnelLaboratories, assignPersonnelToLabAction, unassignPersonnelFromLabAction }) {
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [email, setEmail] = useState("");
@@ -2308,12 +2310,16 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Personnel</h1>
       <p className="text-sm text-gray-500 mb-4">Laboratory staff available for clause ownership, task assignment, and NC investigation. Record Card Number is each person's sign-in username.</p>
 
-      <ImportExportBar
-        label="staff list"
-        templateRows={personnel.map(p => ({ ID: p.id, Name: p.name, Role: p.role, Email: p.email, "Record Card Number": p.recordCardNumber, Password: p.password, "Access Role": p.accessRole, Laboratory: laboratories.find(l => l.id === p.laboratoryId)?.name || "" }))}
-        sheetName="Personnel" filenameBase="lab-personnel" onImportRows={handleImport} canImport={isAdmin}
-      />
-      <p className="text-xs text-gray-400 -mt-2 mb-4">Download, edit in Excel, then re-import — rows with a matching ID update that person's details; new rows (blank ID, with a Password filled in) create a real login. Record Card Number becomes their username.</p>
+      {canSeeAllStaff && (
+        <>
+          <ImportExportBar
+            label="staff list"
+            templateRows={personnel.map(p => ({ ID: p.id, Name: p.name, Role: p.role, Email: p.email, "Record Card Number": p.recordCardNumber, Password: p.password, "Access Role": p.accessRole, Laboratory: laboratories.find(l => l.id === p.laboratoryId)?.name || "" }))}
+            sheetName="Personnel" filenameBase="lab-personnel" onImportRows={handleImport} canImport={isAdmin}
+          />
+          <p className="text-xs text-gray-400 -mt-2 mb-4">Download, edit in Excel, then re-import — rows with a matching ID update that person's details; new rows (blank ID, with a Password filled in) create a real login. Record Card Number becomes their username.</p>
+        </>
+      )}
 
       {isAdmin ? (
         <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
@@ -2352,9 +2358,10 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
         <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-2"><KeyRound size={12} /> You can also update any existing person's record card number (username), access role, and password below. Access role is auto-detected from their account at login — staff never choose it themselves.</div>
       )}
 
-      <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
-        {personnel.length === 0 && <Empty text="No personnel added yet." />}
-        {personnel.map(p => (
+      {canSeeAllStaff ? (
+        <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
+          {personnel.length === 0 && <Empty text="No personnel added yet." />}
+          {personnel.map(p => (
           <div key={p.id} className="flex items-start gap-3 px-5 py-3 flex-wrap">
             <div className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-medium text-white shrink-0" style={{ background: COLORS.teal }}>
               {p.name.slice(0, 1).toUpperCase()}
@@ -2422,8 +2429,107 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
               </div>
             )}
           </div>
-        ))}
+          ))}
+        </div>
+      ) : (
+        <MyProfileCard currentUser={currentUser} personnel={personnel} laboratories={laboratories} />
+      )}
+    </div>
+  );
+}
+
+// ---------------- Self-service: a non-Admin/QA-Manager user's own record only ----------------
+function MyProfileCard({ currentUser, personnel, laboratories }) {
+  const me = personnel.find(p => p.id === currentUser?.id);
+  const [email, setEmail] = useState(me?.email || "");
+  const [savingEmail, setSavingEmail] = useState(false);
+  const [emailStatus, setEmailStatus] = useState("");
+
+  if (!me) return <Empty text="Your personnel record could not be found." />;
+
+  const saveEmail = async () => {
+    setSavingEmail(true); setEmailStatus("");
+    try {
+      await personnelApi.updateMyEmail(email || null);
+      setEmailStatus("Saved.");
+      setTimeout(() => setEmailStatus(""), 1500);
+    } catch (e) {
+      setEmailStatus(e.message);
+    } finally {
+      setSavingEmail(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-lg border p-5 max-w-lg" style={{ borderColor: "#E1EBE8" }}>
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-medium text-white shrink-0" style={{ background: COLORS.teal }}>
+          {me.name.slice(0, 1).toUpperCase()}
+        </div>
+        <div>
+          <div className="text-sm font-medium">{me.name}</div>
+          <div className="text-xs text-gray-400">{me.role || "No role set"}</div>
+        </div>
       </div>
+
+      <div className="grid grid-cols-2 gap-3 text-xs mb-4">
+        <div><div className="text-gray-400 mb-0.5">Record card # (username)</div><div>{me.recordCardNumber || "—"}</div></div>
+        <div><div className="text-gray-400 mb-0.5">Access role</div><div>{me.accessRole || "Technologist"}</div></div>
+        <div className="col-span-2"><div className="text-gray-400 mb-0.5">Laboratory access</div><div>{laboratories.find(l => l.id === me.laboratoryId)?.name || "No primary lab assigned"}</div></div>
+      </div>
+      <p className="text-[11px] text-gray-400 mb-4">Record card number, access role, and laboratory assignment can only be changed by an Admin.</p>
+
+      <Field label="Contact email">
+        <div className="flex items-center gap-2">
+          <input className={inputCls} style={inputStyle} value={email} onChange={e => setEmail(e.target.value)} placeholder="name@lab.mv" />
+          <button onClick={saveEmail} disabled={savingEmail} className="text-xs px-3 py-1.5 rounded-md text-white disabled:opacity-50 whitespace-nowrap" style={{ background: COLORS.teal }}>
+            {savingEmail ? "Saving…" : "Save"}
+          </button>
+        </div>
+        {emailStatus && <div className="text-[11px] mt-1" style={{ color: emailStatus === "Saved." ? COLORS.teal : COLORS.red }}>{emailStatus}</div>}
+      </Field>
+
+      <div className="mt-4">
+        <div className="text-xs text-gray-500 mb-1.5">Password</div>
+        <MyPasswordControl />
+      </div>
+    </div>
+  );
+}
+
+function MyPasswordControl() {
+  const [open, setOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
+
+  const handleChange = async () => {
+    if (newPassword.length < 6) { setStatus("At least 6 characters."); return; }
+    setBusy(true); setStatus("");
+    try {
+      await personnelApi.updateMyPassword(newPassword);
+      setStatus("Password updated.");
+      setNewPassword("");
+      setTimeout(() => { setOpen(false); setStatus(""); }, 1200);
+    } catch (e) {
+      setStatus(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return <button onClick={() => setOpen(true)} className="text-xs px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.navy, color: COLORS.navy }}>Change password</button>;
+  }
+  return (
+    <div className="flex items-center gap-1">
+      <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="New password"
+        className="text-xs border rounded-md px-2 py-1 w-36" style={{ borderColor: "#D8E5E1" }} />
+      <button disabled={busy} onClick={handleChange} className="text-xs px-2 py-1 rounded-md text-white disabled:opacity-50" style={{ background: COLORS.teal }}>
+        {busy ? "…" : "Save"}
+      </button>
+      <button onClick={() => { setOpen(false); setStatus(""); }} className="text-gray-400"><X size={12} /></button>
+      {status && <span className="text-[10px]" style={{ color: status === "Password updated." ? COLORS.teal : COLORS.red }}>{status}</span>}
     </div>
   );
 }
