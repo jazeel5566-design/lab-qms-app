@@ -1,8 +1,10 @@
 import { supabase } from "../supabaseClient.js";
 
 // ---------------- Staff competency (Clause 6.1) ----------------
-export async function listCompetency() {
-  const { data, error } = await supabase.from("competency_records").select("*, personnel(name)").order("date", { ascending: false });
+export async function listCompetency(laboratoryId) {
+  let q = supabase.from("competency_records").select("*, personnel(name)").order("date", { ascending: false });
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
 }
@@ -28,8 +30,10 @@ export async function confirmCompetencyAssessment(recordId) {
 }
 
 // ---------------- Equipment inventory (Clauses 6.3/6.4) ----------------
-export async function listEquipment() {
-  const { data, error } = await supabase.from("equipment").select("*").order("name");
+export async function listEquipment(laboratoryId) {
+  let q = supabase.from("equipment").select("*").order("name");
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
 }
@@ -49,9 +53,10 @@ export async function deleteEquipment(id) {
 }
 
 // ---------------- Equipment IQ/OQ/PQ/calibration/maintenance records ----------------
-export async function listEquipmentRecords(equipmentId) {
+export async function listEquipmentRecords(equipmentId, laboratoryId) {
   let query = supabase.from("equipment_records").select("*").order("date", { ascending: false });
   if (equipmentId) query = query.eq("equipment_id", equipmentId);
+  if (laboratoryId) query = query.eq("laboratory_id", laboratoryId);
   const { data, error } = await query;
   if (error) throw new Error(error.message);
   return data;

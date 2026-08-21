@@ -1,7 +1,9 @@
 import { supabase } from "../supabaseClient.js";
 
-export async function listClauseEvidence() {
-  const { data, error } = await supabase.from("clause_evidence").select("*");
+export async function listClauseEvidence(laboratoryId) {
+  let q = supabase.from("clause_evidence").select("*");
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
 }

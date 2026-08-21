@@ -54,8 +54,10 @@ export function applyR4s(runsWithZ, allControlsRunsForParam) {
 // ============================================================================
 // Machines / parameters / controls (master data, canEdit-gated via RLS)
 // ============================================================================
-export async function listMachines() {
-  const { data, error } = await supabase.from("qc_machines").select("*").order("name");
+export async function listMachines(laboratoryId) {
+  let q = supabase.from("qc_machines").select("*").order("name");
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
 }
@@ -74,9 +76,10 @@ export async function deleteMachine(id) {
   if (error) throw new Error(error.message);
 }
 
-export async function listParameters(machineId) {
+export async function listParameters(machineId, laboratoryId) {
   let q = supabase.from("qc_parameters").select("*");
   if (machineId) q = q.eq("machine_id", machineId);
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
@@ -91,9 +94,10 @@ export async function deleteParameter(id) {
   if (error) throw new Error(error.message);
 }
 
-export async function listControls(parameterId) {
+export async function listControls(parameterId, laboratoryId) {
   let q = supabase.from("qc_controls").select("*");
   if (parameterId) q = q.eq("parameter_id", parameterId);
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
@@ -111,9 +115,10 @@ export async function deleteControl(id) {
 // ============================================================================
 // Runs (IQC results)
 // ============================================================================
-export async function listRuns(controlIds) {
+export async function listRuns(controlIds, laboratoryId) {
   let q = supabase.from("qc_runs").select("*").order("date", { ascending: true });
   if (controlIds?.length) q = q.in("control_id", controlIds);
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
   const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;

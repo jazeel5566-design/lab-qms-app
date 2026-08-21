@@ -1,7 +1,9 @@
 import { supabase } from "../supabaseClient.js";
 
-export async function listAllAcknowledgments() {
-  const { data, error } = await supabase.from("document_acknowledgments").select("*");
+export async function listAllAcknowledgments(laboratoryId) {
+  let q = supabase.from("document_acknowledgments").select("*");
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
 }

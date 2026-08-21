@@ -5,8 +5,10 @@ import { supabase } from "../supabaseClient.js";
 // sdi — it's a Postgres GENERATED column (0001_init_schema.sql). evaluation
 // is still set by the client/app logic since it can be manually overridden
 // after the fact (matches original app behavior).
-export async function listEqaEvents() {
-  const { data, error } = await supabase.from("eqa_events").select("*").order("date_received", { ascending: false });
+export async function listEqaEvents(laboratoryId) {
+  let q = supabase.from("eqa_events").select("*").order("date_received", { ascending: false });
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
 }
@@ -26,8 +28,10 @@ export async function deleteEqaEvent(id) {
 }
 
 // ---------------- Documents (linked SOPs/certificates/personal docs) ----------------
-export async function listDocuments() {
-  const { data, error } = await supabase.from("documents").select("*").order("uploaded_at", { ascending: false });
+export async function listDocuments(laboratoryId) {
+  let q = supabase.from("documents").select("*").order("uploaded_at", { ascending: false });
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
 }

@@ -1,7 +1,9 @@
 import { supabase } from "../supabaseClient.js";
 
-export async function listEquipmentDowntime() {
-  const { data, error } = await supabase.from("equipment_downtime").select("*").order("started_at", { ascending: false });
+export async function listEquipmentDowntime(laboratoryId) {
+  let q = supabase.from("equipment_downtime").select("*").order("started_at", { ascending: false });
+  if (laboratoryId) q = q.eq("laboratory_id", laboratoryId);
+  const { data, error } = await q;
   if (error) throw new Error(error.message);
   return data;
 }
