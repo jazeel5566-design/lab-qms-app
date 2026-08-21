@@ -72,6 +72,7 @@ export const personnelToDb = (p) => ({
   email: p.email || null,
   record_card_number: p.recordCardNumber,
   access_role: p.accessRole,
+  laboratory_id: p.laboratoryId,
 });
 
 // ---------------- clause_status ----------------

@@ -2379,6 +2379,11 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
                 <select value={valueFor(p, "accessRole") || "Technologist"} onChange={e => editRow(p.id, { accessRole: e.target.value })} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
                   {ROLES.map(r => <option key={r}>{r}</option>)}
                 </select>
+                <select value={valueFor(p, "laboratoryId") || ""} onChange={e => editRow(p.id, { laboratoryId: e.target.value })}
+                  className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }} title="Primary laboratory">
+                  <option value="">No primary lab</option>
+                  {laboratories.map(lab => <option key={lab.id} value={lab.id}>{lab.name}</option>)}
+                </select>
                 {rowDrafts[p.id] && (
                   <button onClick={() => saveRow(p)} disabled={savingRow === p.id}
                     className="text-xs px-2 py-1 rounded-md text-white disabled:opacity-50 whitespace-nowrap" style={{ background: COLORS.teal }}>
