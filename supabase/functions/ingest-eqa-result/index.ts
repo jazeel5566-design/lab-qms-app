@@ -21,6 +21,8 @@
 //     "provider": "optional, e.g. RIQAS",
 //     "cycle": "optional, e.g. 2026 Round 4",
 //     "sampleNumber": 1,       // optional — which sample in the cycle (typically 1-12)
+//     "runDate": "2026-08-01", // optional — when the sample was actually tested
+//     "dueDate": "2026-08-15", // optional — the provider's submission deadline for this sample
 //     "labResult": 12.4,
 //     "peerMean": 12.6,        // optional
 //     "peerSD": 0.5,           // optional
@@ -65,7 +67,7 @@ serve(async (req) => {
     return jsonError("Request body must be valid JSON");
   }
 
-  const { discipline, machineName, parameter, provider, cycle, sampleNumber, labResult, peerMean, peerSD, dateReceived } = body;
+  const { discipline, machineName, parameter, provider, cycle, sampleNumber, runDate, dueDate, labResult, peerMean, peerSD, dateReceived } = body;
   if (!discipline || !parameter || labResult === undefined || labResult === null) {
     return jsonError("discipline, parameter, and labResult are all required");
   }
@@ -101,6 +103,8 @@ serve(async (req) => {
       provider: provider || null,
       cycle: cycle || null,
       sample_number: sampleNumber || null,
+      run_date: runDate || null,
+      due_date: dueDate || null,
       date_received: dateReceived || new Date().toISOString().slice(0, 10),
       lab_result: labResult,
       peer_mean: hasPeerStats ? peerMean : null,

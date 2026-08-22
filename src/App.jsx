@@ -4227,7 +4227,9 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
   const [showForm, setShowForm] = useState(false);
   const [filterDiscipline, setFilterDiscipline] = useState("All");
   const [showTrends, setShowTrends] = useState(false);
+  const [showCycleSummary, setShowCycleSummary] = useState(false);
   const [trendParameter, setTrendParameter] = useState("");
+  const [expandedCycle, setExpandedCycle] = useState(null);
 
   const addEvents = (drafts) => {
     const newEvents = drafts.map(draft => {
@@ -4256,11 +4258,33 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
       .map(e => ({ date: e.dateReceived, sdi: Number(e.sdi) }));
   }, [eqaEvents, trendParameter]);
 
+  /** Groups results by discipline + provider + cycle — the real-world "annual cycle" a set of monthly/quarterly samples belongs to — so performance can be reviewed at the cycle level, the way an EQA provider's own end-of-cycle report does, rather than one sample at a time. */
+  const cycleGroups = useMemo(() => {
+    const map = new Map();
+    filtered.forEach(e => {
+      const key = `${e.discipline}||${e.provider || "—"}||${e.cycle || "—"}`;
+      if (!map.has(key)) map.set(key, { discipline: e.discipline, provider: e.provider, cycle: e.cycle, events: [] });
+      map.get(key).events.push(e);
+    });
+    return Array.from(map.values()).map(g => {
+      const withSdi = g.events.filter(e => e.sdi !== null && e.sdi !== undefined);
+      const avgSdi = withSdi.length ? withSdi.reduce((sum, e) => sum + Math.abs(Number(e.sdi)), 0) / withSdi.length : null;
+      const counts = { Satisfactory: 0, Marginal: 0, Unsatisfactory: 0, "Not yet received": 0 };
+      g.events.forEach(e => { counts[e.evaluation] = (counts[e.evaluation] || 0) + 1; });
+      const overdue = g.events.filter(e => e.dueDate && e.dueDate < todayISO() && e.evaluation === "Not yet received");
+      const sortedEvents = [...g.events].sort((a, b) => (Number(a.sampleNumber) || 0) - (Number(b.sampleNumber) || 0) || (a.runDate || "").localeCompare(b.runDate || ""));
+      return { ...g, events: sortedEvents, avgSdi, counts, overdueCount: overdue.length, sampleCount: g.events.length };
+    }).sort((a, b) => (a.discipline + a.provider + a.cycle).localeCompare(b.discipline + b.provider + b.cycle));
+  }, [filtered]);
+
   return (
     <div className="p-8 max-w-6xl">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>External Quality Assessment (EQAS)</h1>
         <div className="flex gap-2">
+          <button onClick={() => setShowCycleSummary(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+            <BarChart3 size={14} /> {showCycleSummary ? "Hide" : "Show"} cycle summary
+          </button>
           <button onClick={() => setShowTrends(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
             <Activity size={14} /> {showTrends ? "Hide" : "Show"} trends
           </button>
@@ -4272,6 +4296,57 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
         </div>
       </div>
       <p className="text-sm text-gray-500 mb-4">Proficiency testing / interlaboratory comparison across all laboratories, with automatic SDI evaluation.</p>
+
+      {showCycleSummary && (
+        <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+          <div className="text-sm font-semibold mb-3" style={{ color: COLORS.navy }}>Performance by cycle</div>
+          {cycleGroups.length === 0 ? (
+            <Empty text="No EQA results logged yet." />
+          ) : (
+            <div className="divide-y" style={{ borderColor: "#E1EBE8" }}>
+              {cycleGroups.map(g => {
+                const key = `${g.discipline}||${g.provider}||${g.cycle}`;
+                const isOpen = expandedCycle === key;
+                return (
+                  <div key={key} className="py-3">
+                    <button onClick={() => setExpandedCycle(isOpen ? null : key)} className="w-full flex items-center gap-3 flex-wrap text-left">
+                      <ChevronRight size={14} style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s" }} />
+                      <Badge color={disciplineColor(g.discipline)}>{g.discipline}</Badge>
+                      <span className="text-sm font-medium">{g.provider || "No provider set"}{g.cycle ? ` · ${g.cycle}` : ""}</span>
+                      <span className="text-xs text-gray-400">{g.sampleCount} sample{g.sampleCount === 1 ? "" : "s"}</span>
+                      {g.avgSdi !== null && <span className="text-xs text-gray-400">Avg |SDI| {g.avgSdi.toFixed(2)}</span>}
+                      {g.overdueCount > 0 && <Badge color={COLORS.red}>{g.overdueCount} submission{g.overdueCount === 1 ? "" : "s"} overdue</Badge>}
+                      <div className="ml-auto flex gap-1.5">
+                        {g.counts.Satisfactory > 0 && <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: COLORS.mint, color: COLORS.teal }}>{g.counts.Satisfactory} Satisfactory</span>}
+                        {g.counts.Marginal > 0 && <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#FCEFDC", color: COLORS.amber }}>{g.counts.Marginal} Marginal</span>}
+                        {g.counts.Unsatisfactory > 0 && <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: "#F9E1DF", color: COLORS.red }}>{g.counts.Unsatisfactory} Unsatisfactory</span>}
+                        {g.counts["Not yet received"] > 0 && <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">{g.counts["Not yet received"]} pending</span>}
+                      </div>
+                    </button>
+                    {isOpen && (
+                      <div className="mt-2 ml-6 space-y-1">
+                        {g.events.map(e => (
+                          <div key={e.id} className="flex items-center gap-3 flex-wrap text-xs text-gray-500 py-1">
+                            <span className="w-16 shrink-0 font-medium" style={{ color: COLORS.ink }}>{e.sampleNumber ? `Sample ${e.sampleNumber}` : "—"}</span>
+                            <span className="w-28 shrink-0">{e.parameter}</span>
+                            <span>{e.runDate ? `Run ${e.runDate}` : "Run date not set"}</span>
+                            <span className={e.dueDate && e.dueDate < todayISO() && e.evaluation === "Not yet received" ? "font-medium" : ""} style={e.dueDate && e.dueDate < todayISO() && e.evaluation === "Not yet received" ? { color: COLORS.red } : {}}>
+                              {e.dueDate ? `Due ${e.dueDate}` : "Due date not set"}
+                            </span>
+                            <span>{e.dateReceived ? `Received ${e.dateReceived}` : "Not yet received"}</span>
+                            {e.sdi !== null && e.sdi !== undefined && <span>SDI {Number(e.sdi).toFixed(2)}</span>}
+                            <span className="ml-auto" style={{ color: evalColor(e.evaluation) }}>{e.evaluation}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {showTrends && (
         <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
@@ -4336,6 +4411,16 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
               Lab result: {e.labResult} {e.peerMean !== "" && e.peerMean !== undefined ? `· Peer mean ${e.peerMean} · Peer SD ${e.peerSD}` : ""}
               {e.sdi !== null && e.sdi !== undefined ? ` · SDI ${Number(e.sdi).toFixed(2)}` : ""}
             </div>
+            {(e.runDate || e.dueDate) && (
+              <div className="text-xs text-gray-400 mt-0.5">
+                {e.runDate ? `Run date: ${e.runDate}` : ""}{e.runDate && e.dueDate ? " · " : ""}
+                {e.dueDate ? (
+                  <span style={e.dueDate < todayISO() && e.evaluation === "Not yet received" ? { color: COLORS.red, fontWeight: 500 } : {}}>
+                    {e.dueDate < todayISO() && e.evaluation === "Not yet received" ? "Submission overdue: " : "Submission due: "}{e.dueDate}
+                  </span>
+                ) : ""}
+              </div>
+            )}
             {e.evaluation === "Unsatisfactory" && (
               e.linkedNcId ? (
                 <div className="mt-1"><Badge color={COLORS.teal}>{ncs.find(n => n.id === e.linkedNcId)?.ncNumber || "NC"} raised from this result</Badge></div>
@@ -4366,37 +4451,41 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
   const [machineId, setMachineId] = useState("");
   const [provider, setProvider] = useState("");
   const [cycle, setCycle] = useState("");
-  const [dateReceived, setDateReceived] = useState(todayISO());
   const [nextCycleDate, setNextCycleDate] = useState("");
   const [notes, setNotes] = useState("");
 
   // Single-entry fields
   const [parameter, setParameter] = useState("");
   const [sampleNumber, setSampleNumber] = useState("");
+  const [runDate, setRunDate] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [dateReceived, setDateReceived] = useState(todayISO());
   const [labResult, setLabResult] = useState("");
   const [peerMean, setPeerMean] = useState("");
   const [peerSD, setPeerSD] = useState("");
 
-  // Batch-entry rows — same shared header above. Each row is one result:
-  // either a different analyte, a different sample number within the same
-  // cycle, or both — "Fill 12 samples" below is a shortcut for the common
-  // case of one analyte reported across a full 12-sample EQA round.
-  const [rows, setRows] = useState([{ parameter: "", sampleNumber: "", labResult: "", peerMean: "", peerSD: "" }]);
+  // Batch-entry rows — same shared header above (discipline/provider/cycle).
+  // run date, due date, and date received are PER ROW rather than shared,
+  // since a monthly-annual cycle's 12 samples each have their own dates
+  // spread across the year — "Fill 12 samples" below is a shortcut for
+  // exactly that common case (one analyte reported across a full cycle).
+  const blankRow = () => ({ parameter: "", sampleNumber: "", runDate: "", dueDate: "", dateReceived: "", labResult: "", peerMean: "", peerSD: "" });
+  const [rows, setRows] = useState([blankRow()]);
   const updateRow = (i, patch) => setRows(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r));
-  const addRow = () => setRows(prev => [...prev, { parameter: "", sampleNumber: "", labResult: "", peerMean: "", peerSD: "" }]);
+  const addRow = () => setRows(prev => [...prev, blankRow()]);
   const removeRow = (i) => setRows(prev => prev.filter((_, idx) => idx !== i));
   const fill12Samples = () => {
     const sharedParameter = rows[0]?.parameter || "";
-    setRows(Array.from({ length: 12 }, (_, i) => ({ parameter: sharedParameter, sampleNumber: String(i + 1), labResult: "", peerMean: "", peerSD: "" })));
+    setRows(Array.from({ length: 12 }, (_, i) => ({ ...blankRow(), parameter: sharedParameter, sampleNumber: String(i + 1) })));
   };
 
   const machinesForDiscipline = qcMachines.filter(m => m.discipline === discipline);
-  const sharedFields = { discipline, machineId, provider, cycle, dateReceived, nextCycleDate, notes };
+  const sharedFields = { discipline, machineId, provider, cycle, nextCycleDate, notes };
 
   const handleSave = () => {
     if (mode === "single") {
       if (!parameter.trim() || labResult === "") return;
-      onSave([{ ...sharedFields, parameter, sampleNumber, labResult, peerMean, peerSD }]);
+      onSave([{ ...sharedFields, parameter, sampleNumber, runDate, dueDate, dateReceived, labResult, peerMean, peerSD }]);
     } else {
       const validRows = rows.filter(r => r.parameter.trim() && r.labResult !== "");
       if (validRows.length === 0) return;
@@ -4422,8 +4511,7 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
           </select>
         </Field>
         <Field label="Provider / scheme"><input className={inputCls} style={inputStyle} value={provider} onChange={e => setProvider(e.target.value)} placeholder="e.g. RIQAS, UK NEQAS, CAP" /></Field>
-        <Field label="Cycle / round"><input className={inputCls} style={inputStyle} value={cycle} onChange={e => setCycle(e.target.value)} placeholder="e.g. 2026 Round 4" /></Field>
-        <Field label="Date result received"><input type="date" className={inputCls} style={inputStyle} value={dateReceived} onChange={e => setDateReceived(e.target.value)} /></Field>
+        <Field label="Cycle / round"><input className={inputCls} style={inputStyle} value={cycle} onChange={e => setCycle(e.target.value)} placeholder="e.g. 2026 Annual Cycle" /></Field>
         <Field label="Next cycle due (optional)"><input type="date" className={inputCls} style={inputStyle} value={nextCycleDate} onChange={e => setNextCycleDate(e.target.value)} /></Field>
       </div>
 
@@ -4431,6 +4519,9 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
         <div className="grid grid-cols-3 gap-3">
           <Field label="Parameter"><input className={inputCls} style={inputStyle} value={parameter} onChange={e => setParameter(e.target.value)} placeholder="e.g. Hemoglobin, Glucose, TSH" /></Field>
           <Field label="Sample # (optional)"><input type="number" min="1" className={inputCls} style={inputStyle} value={sampleNumber} onChange={e => setSampleNumber(e.target.value)} placeholder="e.g. 1–12" /></Field>
+          <Field label="Sample run date"><input type="date" className={inputCls} style={inputStyle} value={runDate} onChange={e => setRunDate(e.target.value)} /></Field>
+          <Field label="Submission due date"><input type="date" className={inputCls} style={inputStyle} value={dueDate} onChange={e => setDueDate(e.target.value)} /></Field>
+          <Field label="Date result received"><input type="date" className={inputCls} style={inputStyle} value={dateReceived} onChange={e => setDateReceived(e.target.value)} /></Field>
           <Field label="Lab result"><input type="number" step="any" className={inputCls} style={inputStyle} value={labResult} onChange={e => setLabResult(e.target.value)} /></Field>
           <Field label="Peer group mean"><input type="number" step="any" className={inputCls} style={inputStyle} value={peerMean} onChange={e => setPeerMean(e.target.value)} /></Field>
           <Field label="Peer group SD"><input type="number" step="any" className={inputCls} style={inputStyle} value={peerSD} onChange={e => setPeerSD(e.target.value)} /></Field>
@@ -4438,19 +4529,26 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
       ) : (
         <div className="mb-3">
           <div className="flex items-center justify-between mb-1">
-            <div className="text-xs font-medium text-gray-500">Results in this batch</div>
+            <div className="text-xs font-medium text-gray-500">Results in this batch — each row is one sample/analyte result, with its own dates</div>
             <button onClick={fill12Samples} className="text-xs flex items-center gap-1" style={{ color: COLORS.teal }}>
               <Copy size={12} /> Fill 12 samples (same analyte)
             </button>
           </div>
           {rows.map((r, i) => (
-            <div key={i} className="grid grid-cols-6 gap-2 mb-1.5 items-center">
-              <input className={inputCls} style={inputStyle} value={r.parameter} onChange={e => updateRow(i, { parameter: e.target.value })} placeholder="Analyte" />
-              <input type="number" min="1" className={inputCls} style={inputStyle} value={r.sampleNumber} onChange={e => updateRow(i, { sampleNumber: e.target.value })} placeholder="Sample #" />
-              <input type="number" step="any" className={inputCls} style={inputStyle} value={r.labResult} onChange={e => updateRow(i, { labResult: e.target.value })} placeholder="Lab result" />
-              <input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerMean} onChange={e => updateRow(i, { peerMean: e.target.value })} placeholder="Peer mean" />
-              <input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerSD} onChange={e => updateRow(i, { peerSD: e.target.value })} placeholder="Peer SD" />
-              <button onClick={() => removeRow(i)} disabled={rows.length === 1} className="text-gray-300 hover:text-red-500 disabled:opacity-30"><Trash2 size={14} /></button>
+            <div key={i} className="border rounded-md p-2 mb-1.5" style={{ borderColor: "#E1EBE8" }}>
+              <div className="flex items-center gap-2 mb-1.5">
+                <input className={inputCls} style={{ ...inputStyle, flex: 1 }} value={r.parameter} onChange={e => updateRow(i, { parameter: e.target.value })} placeholder="Analyte" />
+                <input type="number" min="1" className={inputCls} style={{ ...inputStyle, width: 90 }} value={r.sampleNumber} onChange={e => updateRow(i, { sampleNumber: e.target.value })} placeholder="Sample #" />
+                <button onClick={() => removeRow(i)} disabled={rows.length === 1} className="text-gray-300 hover:text-red-500 disabled:opacity-30 shrink-0"><Trash2 size={14} /></button>
+              </div>
+              <div className="grid grid-cols-6 gap-2">
+                <input type="date" className={inputCls} style={inputStyle} value={r.runDate} onChange={e => updateRow(i, { runDate: e.target.value })} title="Sample run date" />
+                <input type="date" className={inputCls} style={inputStyle} value={r.dueDate} onChange={e => updateRow(i, { dueDate: e.target.value })} title="Submission due date" />
+                <input type="date" className={inputCls} style={inputStyle} value={r.dateReceived} onChange={e => updateRow(i, { dateReceived: e.target.value })} title="Date result received" />
+                <input type="number" step="any" className={inputCls} style={inputStyle} value={r.labResult} onChange={e => updateRow(i, { labResult: e.target.value })} placeholder="Lab result" />
+                <input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerMean} onChange={e => updateRow(i, { peerMean: e.target.value })} placeholder="Peer mean" />
+                <input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerSD} onChange={e => updateRow(i, { peerSD: e.target.value })} placeholder="Peer SD" />
+              </div>
             </div>
           ))}
           <button onClick={addRow} className="text-xs flex items-center gap-1 mt-1" style={{ color: COLORS.teal }}><Plus size={12} /> Add another row</button>
