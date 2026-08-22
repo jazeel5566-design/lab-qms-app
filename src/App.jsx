@@ -4,7 +4,7 @@ import {
   Circle, Clock, Plus, X, ChevronDown, ChevronRight, Trash2, Pencil,
   ShieldCheck, ListChecks, Search, Save, GraduationCap, Wrench, Paperclip,
   Activity, BarChart3, UserCheck, ShieldAlert, FlaskConical, Download, Upload,
-  History, LogOut, FolderOpen, Link as LinkIcon, KeyRound, DatabaseBackup, BookOpen
+  History, LogOut, FolderOpen, Link as LinkIcon, KeyRound, DatabaseBackup, BookOpen, Copy
 } from "lucide-react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer
@@ -170,7 +170,8 @@ const RECORD_RESULT = ["Pass", "Fail", "Conditional pass", "Pending"];
 
 // IQC / EQA (Clauses 7.3.7 Quality control, 7.3.7.3 EQA / interlaboratory comparison)
 const DISCIPLINES = ["Hematology", "Biochemistry", "Immunochemistry"];
-const DISCIPLINE_COLOR = { Hematology: "#B4453F", Biochemistry: "#14746F", Immunochemistry: "#5B6FA8" };
+const DISCIPLINE_COLOR = { Hematology: "#B4453F", Biochemistry: "#14746F", Immunochemistry: "#5B6FA8", "Clinical Pathology": "#8A6D3B", "Infectious Serology": "#6B4E9C" };
+const disciplineColor = (d) => DISCIPLINE_COLOR[d] || "#5F7B76"; // fallback for any lab name not in the fixed palette above (e.g. Microbiology, or any newly created lab)
 const CONTROL_LEVELS = ["Level 1 (Low)", "Level 2 (Normal)", "Level 3 (High)"];
 const REJECT_RULES = ["1_3s", "2_2s", "R_4s", "4_1s", "10x"];
 const RULE_LABEL = {
@@ -1103,7 +1104,7 @@ export default function App() {
           authorizeQcRunAction={authorizeQcRunAction} bulkImportQcRuns={bulkImportQcRuns}
           equipment={equipment} updateEquipment={updateEquipment} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit}
-          ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} activeLaboratoryId={activeLaboratoryId} />}
+          ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} activeLaboratoryId={activeLaboratoryId} laboratories={laboratories} />}
         {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} currentUser={currentUser} confirmCompetencyAssessmentAction={confirmCompetencyAssessmentAction} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "equipment" && <Equipment equipment={equipment} updateEquipment={updateEquipment}
           equipmentRecords={equipmentRecords} updateEquipmentRecords={updateEquipmentRecords} personnel={personnel} canEdit={canEdit}
@@ -4222,7 +4223,7 @@ function RunForm({ controls, personnel, onSave, onCancel }) {
 }
 
 // ---------------- EQAS (Clause 7.3.7.3 External Quality Assessment) ----------------
-function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction, activeLaboratoryId }) {
+function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction, activeLaboratoryId, laboratories }) {
   const [showForm, setShowForm] = useState(false);
   const [filterDiscipline, setFilterDiscipline] = useState("All");
   const [showTrends, setShowTrends] = useState(false);
@@ -4270,7 +4271,7 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
           )}
         </div>
       </div>
-      <p className="text-sm text-gray-500 mb-4">Proficiency testing / interlaboratory comparison across Hematology, Biochemistry, and Immunochemistry, with automatic SDI evaluation.</p>
+      <p className="text-sm text-gray-500 mb-4">Proficiency testing / interlaboratory comparison across all laboratories, with automatic SDI evaluation.</p>
 
       {showTrends && (
         <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
@@ -4308,19 +4309,22 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
 
       <div className="flex gap-2 mb-4">
         <select value={filterDiscipline} onChange={e => setFilterDiscipline(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
-          <option>All</option>{DISCIPLINES.map(d => <option key={d}>{d}</option>)}
+          <option>All</option>{laboratories.map(l => <option key={l.id}>{l.name}</option>)}
         </select>
       </div>
 
-      {showForm && canEdit && <EQAForm qcMachines={qcMachines} onCancel={() => setShowForm(false)} onSave={addEvents} />}
+      {showForm && canEdit && <EQAForm qcMachines={qcMachines} onCancel={() => setShowForm(false)} onSave={addEvents} laboratories={laboratories} />}
 
       <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
         {filtered.length === 0 && <Empty text="No EQA results logged yet." />}
         {filtered.map(e => (
           <div key={e.id} className="px-5 py-3">
             <div className="flex items-center gap-3 flex-wrap">
-              <Badge color={DISCIPLINE_COLOR[e.discipline]}>{e.discipline}</Badge>
+              <Badge color={disciplineColor(e.discipline)}>{e.discipline}</Badge>
               <span className="text-sm font-medium">{e.parameter}</span>
+              {e.sampleNumber !== "" && e.sampleNumber !== undefined && e.sampleNumber !== null && (
+                <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: COLORS.mint, color: COLORS.teal }}>Sample {e.sampleNumber}</span>
+              )}
               <span className="text-xs text-gray-400">{e.provider}{e.cycle ? ` · ${e.cycle}` : ""}</span>
               <span className="text-xs text-gray-400 ml-auto">{e.dateReceived}</span>
               <select value={e.evaluation} onChange={ev => setEvent(e.id, { evaluation: ev.target.value })} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1", color: evalColor(e.evaluation) }}>
@@ -4356,9 +4360,9 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
   );
 }
 
-function EQAForm({ qcMachines, onSave, onCancel }) {
+function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
   const [mode, setMode] = useState("single"); // "single" | "batch"
-  const [discipline, setDiscipline] = useState(DISCIPLINES[0]);
+  const [discipline, setDiscipline] = useState(laboratories[0]?.name || "");
   const [machineId, setMachineId] = useState("");
   const [provider, setProvider] = useState("");
   const [cycle, setCycle] = useState("");
@@ -4368,15 +4372,23 @@ function EQAForm({ qcMachines, onSave, onCancel }) {
 
   // Single-entry fields
   const [parameter, setParameter] = useState("");
+  const [sampleNumber, setSampleNumber] = useState("");
   const [labResult, setLabResult] = useState("");
   const [peerMean, setPeerMean] = useState("");
   const [peerSD, setPeerSD] = useState("");
 
-  // Batch-entry rows — same shared header above, one row per analyte in the panel
-  const [rows, setRows] = useState([{ parameter: "", labResult: "", peerMean: "", peerSD: "" }]);
+  // Batch-entry rows — same shared header above. Each row is one result:
+  // either a different analyte, a different sample number within the same
+  // cycle, or both — "Fill 12 samples" below is a shortcut for the common
+  // case of one analyte reported across a full 12-sample EQA round.
+  const [rows, setRows] = useState([{ parameter: "", sampleNumber: "", labResult: "", peerMean: "", peerSD: "" }]);
   const updateRow = (i, patch) => setRows(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r));
-  const addRow = () => setRows(prev => [...prev, { parameter: "", labResult: "", peerMean: "", peerSD: "" }]);
+  const addRow = () => setRows(prev => [...prev, { parameter: "", sampleNumber: "", labResult: "", peerMean: "", peerSD: "" }]);
   const removeRow = (i) => setRows(prev => prev.filter((_, idx) => idx !== i));
+  const fill12Samples = () => {
+    const sharedParameter = rows[0]?.parameter || "";
+    setRows(Array.from({ length: 12 }, (_, i) => ({ parameter: sharedParameter, sampleNumber: String(i + 1), labResult: "", peerMean: "", peerSD: "" })));
+  };
 
   const machinesForDiscipline = qcMachines.filter(m => m.discipline === discipline);
   const sharedFields = { discipline, machineId, provider, cycle, dateReceived, nextCycleDate, notes };
@@ -4384,7 +4396,7 @@ function EQAForm({ qcMachines, onSave, onCancel }) {
   const handleSave = () => {
     if (mode === "single") {
       if (!parameter.trim() || labResult === "") return;
-      onSave([{ ...sharedFields, parameter, labResult, peerMean, peerSD }]);
+      onSave([{ ...sharedFields, parameter, sampleNumber, labResult, peerMean, peerSD }]);
     } else {
       const validRows = rows.filter(r => r.parameter.trim() && r.labResult !== "");
       if (validRows.length === 0) return;
@@ -4396,12 +4408,12 @@ function EQAForm({ qcMachines, onSave, onCancel }) {
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
       <div className="flex gap-2 mb-3">
         <button onClick={() => setMode("single")} className="text-xs px-3 py-1.5 rounded-md border" style={{ borderColor: mode === "single" ? COLORS.teal : "#D8E5E1", color: mode === "single" ? COLORS.teal : COLORS.ink, background: mode === "single" ? COLORS.mint : "white" }}>Single result</button>
-        <button onClick={() => setMode("batch")} className="text-xs px-3 py-1.5 rounded-md border" style={{ borderColor: mode === "batch" ? COLORS.teal : "#D8E5E1", color: mode === "batch" ? COLORS.teal : COLORS.ink, background: mode === "batch" ? COLORS.mint : "white" }}>Batch entry (full panel)</button>
+        <button onClick={() => setMode("batch")} className="text-xs px-3 py-1.5 rounded-md border" style={{ borderColor: mode === "batch" ? COLORS.teal : "#D8E5E1", color: mode === "batch" ? COLORS.teal : COLORS.ink, background: mode === "batch" ? COLORS.mint : "white" }}>Batch entry (panel / full cycle)</button>
       </div>
       <div className="grid grid-cols-3 gap-3">
         <Field label="Discipline">
           <select className={inputCls} style={inputStyle} value={discipline} onChange={e => { setDiscipline(e.target.value); setMachineId(""); }}>
-            {DISCIPLINES.map(d => <option key={d}>{d}</option>)}
+            {laboratories.map(l => <option key={l.id}>{l.name}</option>)}
           </select>
         </Field>
         <Field label="Machine (optional)">
@@ -4418,23 +4430,30 @@ function EQAForm({ qcMachines, onSave, onCancel }) {
       {mode === "single" ? (
         <div className="grid grid-cols-3 gap-3">
           <Field label="Parameter"><input className={inputCls} style={inputStyle} value={parameter} onChange={e => setParameter(e.target.value)} placeholder="e.g. Hemoglobin, Glucose, TSH" /></Field>
+          <Field label="Sample # (optional)"><input type="number" min="1" className={inputCls} style={inputStyle} value={sampleNumber} onChange={e => setSampleNumber(e.target.value)} placeholder="e.g. 1–12" /></Field>
           <Field label="Lab result"><input type="number" step="any" className={inputCls} style={inputStyle} value={labResult} onChange={e => setLabResult(e.target.value)} /></Field>
           <Field label="Peer group mean"><input type="number" step="any" className={inputCls} style={inputStyle} value={peerMean} onChange={e => setPeerMean(e.target.value)} /></Field>
           <Field label="Peer group SD"><input type="number" step="any" className={inputCls} style={inputStyle} value={peerSD} onChange={e => setPeerSD(e.target.value)} /></Field>
         </div>
       ) : (
         <div className="mb-3">
-          <div className="text-xs font-medium text-gray-500 mb-1">Analytes in this panel</div>
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-xs font-medium text-gray-500">Results in this batch</div>
+            <button onClick={fill12Samples} className="text-xs flex items-center gap-1" style={{ color: COLORS.teal }}>
+              <Copy size={12} /> Fill 12 samples (same analyte)
+            </button>
+          </div>
           {rows.map((r, i) => (
-            <div key={i} className="grid grid-cols-5 gap-2 mb-1.5 items-center">
+            <div key={i} className="grid grid-cols-6 gap-2 mb-1.5 items-center">
               <input className={inputCls} style={inputStyle} value={r.parameter} onChange={e => updateRow(i, { parameter: e.target.value })} placeholder="Analyte" />
+              <input type="number" min="1" className={inputCls} style={inputStyle} value={r.sampleNumber} onChange={e => updateRow(i, { sampleNumber: e.target.value })} placeholder="Sample #" />
               <input type="number" step="any" className={inputCls} style={inputStyle} value={r.labResult} onChange={e => updateRow(i, { labResult: e.target.value })} placeholder="Lab result" />
               <input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerMean} onChange={e => updateRow(i, { peerMean: e.target.value })} placeholder="Peer mean" />
               <input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerSD} onChange={e => updateRow(i, { peerSD: e.target.value })} placeholder="Peer SD" />
               <button onClick={() => removeRow(i)} disabled={rows.length === 1} className="text-gray-300 hover:text-red-500 disabled:opacity-30"><Trash2 size={14} /></button>
             </div>
           ))}
-          <button onClick={addRow} className="text-xs flex items-center gap-1 mt-1" style={{ color: COLORS.teal }}><Plus size={12} /> Add another analyte</button>
+          <button onClick={addRow} className="text-xs flex items-center gap-1 mt-1" style={{ color: COLORS.teal }}><Plus size={12} /> Add another row</button>
         </div>
       )}
 

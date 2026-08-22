@@ -15,11 +15,12 @@
 //   Header: X-API-Key: lqms_xxxxxxxxxxxx
 //   Body (JSON):
 //   {
-//     "discipline": "Hematology" | "Biochemistry" | "Immunochemistry",
+//     "discipline": "must match an existing laboratory's name exactly, e.g. Biochemistry",
 //     "machineName": "optional — must match an existing QC machine's name if given",
 //     "parameter": "e.g. Hemoglobin",
 //     "provider": "optional, e.g. RIQAS",
 //     "cycle": "optional, e.g. 2026 Round 4",
+//     "sampleNumber": 1,       // optional — which sample in the cycle (typically 1-12)
 //     "labResult": 12.4,
 //     "peerMean": 12.6,        // optional
 //     "peerSD": 0.5,           // optional
@@ -64,13 +65,13 @@ serve(async (req) => {
     return jsonError("Request body must be valid JSON");
   }
 
-  const { discipline, machineName, parameter, provider, cycle, labResult, peerMean, peerSD, dateReceived } = body;
+  const { discipline, machineName, parameter, provider, cycle, sampleNumber, labResult, peerMean, peerSD, dateReceived } = body;
   if (!discipline || !parameter || labResult === undefined || labResult === null) {
     return jsonError("discipline, parameter, and labResult are all required");
   }
-  if (!["Hematology", "Biochemistry", "Immunochemistry"].includes(discipline)) {
-    return jsonError('discipline must be exactly "Hematology", "Biochemistry", or "Immunochemistry"');
-  }
+  // discipline is free text as of 0032 — any real laboratory name is valid,
+  // and the list of labs can grow over time via the app's Settings page, so
+  // there's no fixed list to validate against here anymore.
 
   let machineId: string | null = null;
   let laboratoryId: string | null = keyRow.laboratory_id ?? null;
@@ -99,6 +100,7 @@ serve(async (req) => {
       parameter,
       provider: provider || null,
       cycle: cycle || null,
+      sample_number: sampleNumber || null,
       date_received: dateReceived || new Date().toISOString().slice(0, 10),
       lab_result: labResult,
       peer_mean: hasPeerStats ? peerMean : null,
