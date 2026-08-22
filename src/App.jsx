@@ -4542,12 +4542,12 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
                 <button onClick={() => removeRow(i)} disabled={rows.length === 1} className="text-gray-300 hover:text-red-500 disabled:opacity-30 shrink-0"><Trash2 size={14} /></button>
               </div>
               <div className="grid grid-cols-6 gap-2">
-                <input type="date" className={inputCls} style={inputStyle} value={r.runDate} onChange={e => updateRow(i, { runDate: e.target.value })} title="Sample run date" />
-                <input type="date" className={inputCls} style={inputStyle} value={r.dueDate} onChange={e => updateRow(i, { dueDate: e.target.value })} title="Submission due date" />
-                <input type="date" className={inputCls} style={inputStyle} value={r.dateReceived} onChange={e => updateRow(i, { dateReceived: e.target.value })} title="Date result received" />
-                <input type="number" step="any" className={inputCls} style={inputStyle} value={r.labResult} onChange={e => updateRow(i, { labResult: e.target.value })} placeholder="Lab result" />
-                <input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerMean} onChange={e => updateRow(i, { peerMean: e.target.value })} placeholder="Peer mean" />
-                <input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerSD} onChange={e => updateRow(i, { peerSD: e.target.value })} placeholder="Peer SD" />
+                <div><div className="text-[10px] text-gray-400 mb-0.5">Run date</div><input type="date" className={inputCls} style={inputStyle} value={r.runDate} onChange={e => updateRow(i, { runDate: e.target.value })} /></div>
+                <div><div className="text-[10px] text-gray-400 mb-0.5">Due date</div><input type="date" className={inputCls} style={inputStyle} value={r.dueDate} onChange={e => updateRow(i, { dueDate: e.target.value })} /></div>
+                <div><div className="text-[10px] text-gray-400 mb-0.5">Received</div><input type="date" className={inputCls} style={inputStyle} value={r.dateReceived} onChange={e => updateRow(i, { dateReceived: e.target.value })} /></div>
+                <div><div className="text-[10px] text-gray-400 mb-0.5">Lab result</div><input type="number" step="any" className={inputCls} style={inputStyle} value={r.labResult} onChange={e => updateRow(i, { labResult: e.target.value })} /></div>
+                <div><div className="text-[10px] text-gray-400 mb-0.5">Peer mean</div><input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerMean} onChange={e => updateRow(i, { peerMean: e.target.value })} /></div>
+                <div><div className="text-[10px] text-gray-400 mb-0.5">Peer SD</div><input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerSD} onChange={e => updateRow(i, { peerSD: e.target.value })} /></div>
               </div>
             </div>
           ))}
