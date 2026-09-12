@@ -156,6 +156,8 @@ const STATUS_COLOR = {
 };
 const TASK_STATUS = ["Open", "In progress", "Done"];
 const NC_STATUS = ["Open", "Investigating", "Action planned", "Action implemented", "Verified", "Closed"];
+/** Statuses during which the assignee can still edit their own root cause / corrective / preventive / evidence fields and submit for verification. Once "Action implemented" or later, only the verifying manager/deputy can act further. */
+const NC_ASSIGNEE_EDITABLE_STATUSES = ["Open", "Investigating", "Action planned"];
 const NC_SEVERITY = ["Minor", "Major", "Critical"];
 
 // Staff competency (ISO 15189:2022 Clause 6.1 Personnel)
@@ -2115,6 +2117,13 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
                     <select className={inputCls} style={inputStyle} value={n.status} onChange={e => setNc(n.id, { status: e.target.value, closedDate: e.target.value === "Closed" ? todayISO() : n.closedDate })}>
                       {NC_STATUS.map(s => <option key={s}>{s}</option>)}
                     </select>
+                    {n.status === "Action implemented" && (
+                      <button onClick={() => setNc(n.id, { status: "Verified" })} disabled={!n.verifiedBy}
+                        className="mt-1 text-xs px-2 py-1 rounded-md border disabled:opacity-40 disabled:cursor-not-allowed"
+                        style={{ borderColor: COLORS.teal, color: COLORS.teal }} title={!n.verifiedBy ? "Set a verifying manager/deputy first" : "Confirms the corrective action is acceptable — effectiveness check still required to fully close"}>
+                        <CheckCircle2 size={12} className="inline mr-1" />Verify corrective action
+                      </button>
+                    )}
                   </Field>
                   <Field label="Assigned to">
                     <select className={inputCls} style={inputStyle} value={n.assignedTo || ""} onChange={e => setNc(n.id, { assignedTo: e.target.value })}>
@@ -2152,9 +2161,9 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
                   <Field label="Evidence / records reference">
                     <textarea className={inputCls} style={inputStyle} rows={2} value={n.evidence} onChange={e => setNc(n.id, { evidence: e.target.value })} />
                   </Field>
-                  <Field label="Verified by">
+                  <Field label="Verifying manager / deputy">
                     <select className={inputCls} style={inputStyle} value={n.verifiedBy || ""} onChange={e => setNc(n.id, { verifiedBy: e.target.value })}>
-                      <option value="">Not yet verified</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                      <option value="">Not yet assigned</option>{personnel.filter(p => TASK_ASSIGNER_ROLES.includes(p.accessRole)).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
                     </select>
                   </Field>
                   <Field label="Closed date">
@@ -2181,28 +2190,29 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
                     {n.effectivenessCheckResult === "Effective" && <Badge color={COLORS.teal}>Effective</Badge>}
                     {n.effectivenessCheckResult === "Not effective" && <Badge color={COLORS.red}>Not effective</Badge>}
                   </div>
-                  <p className="text-xs text-gray-500 mb-2">A dated follow-up to confirm the corrective action actually worked — required by Clause 8.7, separate from just verifying the action was carried out.</p>
+                  <p className="text-xs text-gray-500 mb-2">A dated follow-up to confirm the corrective action actually worked — required by Clause 8.7, separate from just verifying the action was carried out. Done by the same verifying manager/deputy, after the corrective action itself has been verified.</p>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Effectiveness check due">
                       <input type="date" className={inputCls} style={inputStyle} value={n.effectivenessCheckDue || ""} onChange={e => setNc(n.id, { effectivenessCheckDue: e.target.value })} />
                     </Field>
                     <Field label="Result">
-                      <select className={inputCls} style={inputStyle} value={n.effectivenessCheckResult || ""} onChange={e => setNc(n.id, {
+                      <select disabled={n.status !== "Verified" && n.status !== "Closed"} className={inputCls} style={inputStyle} value={n.effectivenessCheckResult || ""} onChange={e => setNc(n.id, {
                         effectivenessCheckResult: e.target.value,
-                        effectivenessVerifiedBy: e.target.value ? n.effectivenessVerifiedBy : "",
+                        effectivenessVerifiedBy: e.target.value ? n.verifiedBy : "",
                         effectivenessVerifiedAt: e.target.value ? new Date().toISOString() : "",
+                        status: e.target.value === "Effective" ? "Closed" : n.status,
+                        closedDate: e.target.value === "Effective" ? todayISO() : n.closedDate,
                       })}>
                         <option value="">Not yet checked</option>
                         <option>Pending</option><option>Effective</option><option>Not effective</option>
                       </select>
+                      {n.status !== "Verified" && n.status !== "Closed" && <div className="text-[11px] mt-1 text-gray-400">Verify the corrective action first (above)</div>}
                     </Field>
                     <Field label="Notes">
                       <textarea className={inputCls} style={inputStyle} rows={2} value={n.effectivenessNotes || ""} onChange={e => setNc(n.id, { effectivenessNotes: e.target.value })} placeholder="What was checked, and how" />
                     </Field>
                     <Field label="Verified by">
-                      <select className={inputCls} style={inputStyle} value={n.effectivenessVerifiedBy || ""} onChange={e => setNc(n.id, { effectivenessVerifiedBy: e.target.value })}>
-                        <option value="">Select…</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                      </select>
+                      <div className="text-sm py-1.5" style={{ color: n.verifiedBy ? COLORS.ink : "#9AA5A3" }}>{n.verifiedBy || "Set the verifying manager/deputy above first"}</div>
                     </Field>
                   </div>
                 </div>
@@ -2229,13 +2239,43 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
                     </Badge>
                   </div>
                 )}
-                {(n.rootCause || n.correctiveAction) && (
+
+                {n.assignedTo === currentUser?.name && NC_ASSIGNEE_EDITABLE_STATUSES.includes(n.status) ? (
+                  <div className="mt-3 pt-3 border-t" style={{ borderColor: "#EEF3F1" }}>
+                    <div className="text-xs font-medium mb-2" style={{ color: COLORS.navy }}>This is assigned to you — fill in your investigation below, then submit for verification.</div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="Root cause analysis">
+                        <textarea className={inputCls} style={inputStyle} rows={2} value={n.rootCause || ""} onChange={e => setNc(n.id, { rootCause: e.target.value })} />
+                      </Field>
+                      <Field label="Corrective action">
+                        <textarea className={inputCls} style={inputStyle} rows={2} value={n.correctiveAction || ""} onChange={e => setNc(n.id, { correctiveAction: e.target.value })} />
+                      </Field>
+                      <Field label="Preventive action">
+                        <textarea className={inputCls} style={inputStyle} rows={2} value={n.preventiveAction || ""} onChange={e => setNc(n.id, { preventiveAction: e.target.value })} />
+                      </Field>
+                      <Field label="Evidence / records reference">
+                        <textarea className={inputCls} style={inputStyle} rows={2} value={n.evidence || ""} onChange={e => setNc(n.id, { evidence: e.target.value })} />
+                      </Field>
+                    </div>
+                    <div className="flex justify-end mt-2">
+                      <button onClick={() => setNc(n.id, { status: "Action implemented" })} disabled={!n.rootCause?.trim() || !n.correctiveAction?.trim()}
+                        className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed" style={{ background: COLORS.teal }}
+                        title={!n.rootCause?.trim() || !n.correctiveAction?.trim() ? "Fill in at least root cause and corrective action first" : "Sends this to your verifying manager/deputy for review"}>
+                        <Save size={14} /> Submit for verification
+                      </button>
+                    </div>
+                  </div>
+                ) : (n.rootCause || n.correctiveAction) && (
                   <div className="mt-3 pt-3 border-t text-xs" style={{ borderColor: "#EEF3F1" }}>
                     {n.rootCause && <div className="mb-2"><div className="text-gray-400 mb-0.5">Root cause analysis</div><div>{n.rootCause}</div></div>}
                     {n.correctiveAction && <div><div className="text-gray-400 mb-0.5">Corrective action</div><div>{n.correctiveAction}</div></div>}
                   </div>
                 )}
-                <p className="text-[11px] text-gray-400 mt-3">Investigation, assignment, and close-out are handled by your QA Manager/Admin.</p>
+                <p className="text-[11px] text-gray-400 mt-3">
+                  {n.assignedTo === currentUser?.name && NC_ASSIGNEE_EDITABLE_STATUSES.includes(n.status)
+                    ? "Once submitted, your QA Manager/Admin verifies the corrective action and checks its effectiveness."
+                    : "Investigation, assignment, and close-out are handled by your QA Manager/Admin."}
+                </p>
               </div>
             ))}
           </div>
@@ -2267,9 +2307,13 @@ function NcForm({ personnel, existingNcs, onCancel, onSave, creating }) {
   const [severity, setSeverity] = useState("Minor");
   const [source, setSource] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
+  const [verifiedBy, setVerifiedBy] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [dueTime, setDueTime] = useState("");
   const [relatedNcId, setRelatedNcId] = useState("");
+
+  const managers = personnel.filter(p => TASK_ASSIGNER_ROLES.includes(p.accessRole));
+  const needsVerifier = assignedTo && !verifiedBy;
 
   const suggestions = useMemo(() => {
     if (relatedNcId || !existingNcs?.length) return [];
@@ -2326,12 +2370,18 @@ function NcForm({ personnel, existingNcs, onCancel, onSave, creating }) {
             <option value="">Unassigned</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
           </select>
         </Field>
+        <Field label="Verifying manager / deputy">
+          <select className={inputCls} style={inputStyle} value={verifiedBy} onChange={e => setVerifiedBy(e.target.value)}>
+            <option value="">{assignedTo ? "Select…" : "Set once assigned"}</option>{managers.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+          </select>
+          {needsVerifier && <div className="text-[11px] mt-1" style={{ color: COLORS.amber }}>Required — this person will verify the corrective action and effectiveness check.</div>}
+        </Field>
         <Field label="Target close date"><input type="date" className={inputCls} style={inputStyle} value={dueDate} onChange={e => setDueDate(e.target.value)} /></Field>
         <Field label="Due time (optional)"><input type="time" className={inputCls} style={inputStyle} value={dueTime} onChange={e => setDueTime(e.target.value)} disabled={!dueDate} /></Field>
       </div>
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button disabled={creating} onClick={() => title.trim() && onSave({ title, description, dateOccurred, clauseId, severity, source, assignedTo, dueDate, dueTime: dueDate ? dueTime : "", relatedNcId })}
+        <button disabled={creating || needsVerifier} onClick={() => title.trim() && onSave({ title, description, dateOccurred, clauseId, severity, source, assignedTo, verifiedBy, dueDate, dueTime: dueDate ? dueTime : "", relatedNcId })}
           className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-50" style={{ background: COLORS.teal }}><Save size={14} /> {creating ? "Logging…" : "Log nonconformity"}</button>
       </div>
     </div>
