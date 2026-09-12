@@ -4567,17 +4567,10 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
 
 // ---------------- Sign in (username = record card number, password, auto-detected role) ----------------
 function SignInScreen({ onSignIn }) {
-  const [mode, setMode] = useState("login");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-
-  const [newCardNumber, setNewCardNumber] = useState("");
-  const [newName, setNewName] = useState("");
-  const [newRoleTitle, setNewRoleTitle] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [newPasswordConfirm, setNewPasswordConfirm] = useState("");
 
   const handleLogin = async () => {
     if (!username.trim()) { setError("Enter your record card number."); return; }
@@ -4586,22 +4579,6 @@ function SignInScreen({ onSignIn }) {
     try {
       const { personnel } = await authApi.signIn(username, password);
       onSignIn({ id: personnel.id, name: personnel.name, role: personnel.access_role || "Technologist" });
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleCreateAndSignIn = async () => {
-    if (!newCardNumber.trim()) { setError("Enter your record card number."); return; }
-    if (!newName.trim()) { setError("Enter your name."); return; }
-    if (newPassword.length < 6) { setError("Password must be at least 6 characters (Supabase Auth's minimum)."); return; }
-    if (newPassword !== newPasswordConfirm) { setError("Passwords don't match."); return; }
-    setBusy(true); setError("");
-    try {
-      const person = await authApi.signUpNew({ recordCardNumber: newCardNumber, name: newName, jobTitle: newRoleTitle, password: newPassword });
-      onSignIn({ id: person.id, name: person.name, role: "Technologist" });
     } catch (e) {
       setError(e.message);
     } finally {
@@ -4618,39 +4595,15 @@ function SignInScreen({ onSignIn }) {
         </div>
         <div className="text-xs text-gray-400 mb-5">Sign in with your record card number to continue. Your access role is detected automatically from your account, and every change you make is attributed to you in the audit log.</div>
 
-        <div className="flex gap-2 mb-4 text-xs">
-          <button onClick={() => { setMode("login"); setError(""); }} className="px-3 py-1.5 rounded-md border flex-1"
-            style={{ borderColor: mode === "login" ? COLORS.teal : "#D8E5E1", color: mode === "login" ? COLORS.teal : "#9AA5A3", background: mode === "login" ? COLORS.mint : "white" }}>Log in</button>
-          <button onClick={() => { setMode("new"); setError(""); }} className="px-3 py-1.5 rounded-md border flex-1"
-            style={{ borderColor: mode === "new" ? COLORS.teal : "#D8E5E1", color: mode === "new" ? COLORS.teal : "#9AA5A3", background: mode === "new" ? COLORS.mint : "white" }}>I'm new here</button>
-        </div>
-
-        {mode === "login" ? (
-          <>
-            <Field label="Username (Record Card Number)">
-              <input className={inputCls} style={inputStyle} value={username} onChange={e => { setUsername(e.target.value); setError(""); }} placeholder="e.g. RC-0142" autoCapitalize="none" />
-            </Field>
-            <Field label="Password">
-              <input type="password" className={inputCls} style={inputStyle} value={password} onChange={e => { setPassword(e.target.value); setError(""); }} onKeyDown={e => { if (e.key === "Enter") handleLogin(); }} placeholder="Password" />
-            </Field>
-            {error && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{error}</div>}
-            <button onClick={handleLogin} className="w-full text-sm px-4 py-2 rounded-md text-white font-medium" style={{ background: COLORS.teal }}>Log in</button>
-          </>
-        ) : (
-          <>
-            <Field label="Record card number (this becomes your username)"><input className={inputCls} style={inputStyle} value={newCardNumber} onChange={e => setNewCardNumber(e.target.value)} placeholder="e.g. RC-0142" /></Field>
-            <Field label="Full name"><input className={inputCls} style={inputStyle} value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Aishath Shifa" /></Field>
-            <Field label="Job title (optional)"><input className={inputCls} style={inputStyle} value={newRoleTitle} onChange={e => setNewRoleTitle(e.target.value)} placeholder="e.g. Lab Technologist" /></Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Password"><input type="password" className={inputCls} style={inputStyle} value={newPassword} onChange={e => setNewPassword(e.target.value)} /></Field>
-              <Field label="Confirm password"><input type="password" className={inputCls} style={inputStyle} value={newPasswordConfirm} onChange={e => setNewPasswordConfirm(e.target.value)} /></Field>
-            </div>
-            <div className="text-[11px] text-gray-400 mb-3">New accounts start as <strong>Technologist</strong>. An Admin can raise your access role from the Personnel page afterward.</div>
-            {error && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{error}</div>}
-            <button onClick={handleCreateAndSignIn} className="w-full text-sm px-4 py-2 rounded-md text-white font-medium" style={{ background: COLORS.teal }}>Create account & continue</button>
-          </>
-        )}
-
+        <Field label="Username (Record Card Number)">
+          <input className={inputCls} style={inputStyle} value={username} onChange={e => { setUsername(e.target.value); setError(""); }} placeholder="e.g. RC-0142" autoCapitalize="none" />
+        </Field>
+        <Field label="Password">
+          <input type="password" className={inputCls} style={inputStyle} value={password} onChange={e => { setPassword(e.target.value); setError(""); }} onKeyDown={e => { if (e.key === "Enter") handleLogin(); }} placeholder="Password" />
+        </Field>
+        {error && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{error}</div>}
+        <button onClick={handleLogin} className="w-full text-sm px-4 py-2 rounded-md text-white font-medium" style={{ background: COLORS.teal }}>Log in</button>
+        <div className="text-[11px] text-gray-400 mt-3">New here? An Admin can set up your account and primary laboratory from the Personnel page.</div>
       </div>
     </div>
   );

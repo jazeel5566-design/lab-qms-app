@@ -22,35 +22,6 @@ export async function signIn(recordCardNumber, password) {
   return { personnel, session: data.session };
 }
 
-/**
- * Self-registration ("I'm new here" flow). Always creates a Technologist-level
- * account — matches the RLS policy in 0002, which only allows a self-inserted
- * personnel row at that access level. An Admin can raise it afterward.
- */
-export async function signUpNew({ recordCardNumber, name, jobTitle, password }) {
-  const email = cardToEmail(recordCardNumber);
-  const { data, error } = await supabase.auth.signUp({ email, password });
-  if (error) throw new Error(error.message);
-
-  const authUserId = data.user?.id;
-  if (!authUserId) throw new Error("Sign-up succeeded but no user id was returned — check if email confirmation is required in your Supabase Auth settings and disable it for this internal-tool use case.");
-
-  const { data: person, error: insertError } = await supabase
-    .from("personnel")
-    .insert({
-      auth_user_id: authUserId,
-      name,
-      job_title: jobTitle || null,
-      record_card_number: recordCardNumber.trim(),
-      access_role: "Technologist",
-    })
-    .select()
-    .single();
-
-  if (insertError) throw new Error(insertError.message);
-  return person;
-}
-
 export async function signOut() {
   await supabase.auth.signOut();
 }
