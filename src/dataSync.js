@@ -204,6 +204,7 @@ export const ncFromDb = (row, personnel) => ({
   effectivenessVerifiedAt: row.effectiveness_verified_at || "",
   relatedNcId: row.related_nc_id || "",
   laboratoryId: row.laboratory_id,
+  linkedTaskId: row.linked_task_id || "",
 });
 export const ncToDb = (n, personnel) => ({
   nc_number: n.ncNumber,
@@ -231,6 +232,7 @@ export const ncToDb = (n, personnel) => ({
   effectiveness_verified_at: n.effectivenessVerifiedAt || null,
   related_nc_id: n.relatedNcId || null,
   laboratory_id: n.laboratoryId,
+  linked_task_id: n.linkedTaskId || null,
 });
 
 // ---------------- risks (Clause 5.6) ----------------

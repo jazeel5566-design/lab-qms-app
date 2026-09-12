@@ -711,6 +711,44 @@ export default function App() {
     await updateEqaEvents(eqaEvents.map(e => e.id === eqaEvent.id ? { ...e, linkedNcId: createdNc.id } : e));
   };
 
+  /**
+   * "Create task" button next to an NC's Assigned to / Target close date —
+   * puts the NC's corrective action on that person's actual Tasks list,
+   * due the same date, so it shows up where staff do their daily work
+   * instead of only living inside the NC register. Severity maps to a
+   * sensible starting priority (Admin/QA Manager can always change it
+   * afterward from the Tasks tab).
+   *
+   * Same real-id-vs-temp-id concern as createNcFromEqaAction above: the
+   * task's client-side uid() is not its real database id, so the created
+   * task is re-found by title+assignee+dueDate (a temporary marker,
+   * `__ncLinkMarker`, disambiguates in the rare case of two tasks with an
+   * identical title/assignee/date) before linking it back to the NC.
+   */
+  const createTaskFromNcAction = async (nc) => {
+    if (!nc.assignedTo) { alert("Assign this NC to someone first."); return; }
+    if (!nc.dueDate) { alert("Set a target close date first."); return; }
+    const priority = nc.severity === "Critical" || nc.severity === "Major" ? "High" : "Medium";
+    const marker = uid();
+    const newTask = {
+      id: uid(), title: `Resolve ${nc.ncNumber}: ${nc.title}`, assignedTo: nc.assignedTo, dueDate: nc.dueDate,
+      dueTime: nc.dueTime || "", priority, clauseId: nc.clauseId || "", status: "Open", notes: `Created from ${nc.ncNumber}. ${marker}`,
+      createdAt: todayISO(), laboratoryId: activeLaboratoryId,
+    };
+    const syncedTasks = await updateTasks([newTask, ...tasks]);
+    if (!syncedTasks) return; // Task creation itself failed — already alerted by updateTasks.
+    const createdTask = syncedTasks.find(t => (t.notes || "").includes(marker));
+    if (!createdTask) { alert("The task was created but couldn't be re-found to link it back to this NC — check the Tasks tab."); return; }
+    await updateNcs(ncs.map(n => n.id === nc.id ? { ...n, linkedTaskId: createdTask.id } : n));
+    if (notificationSettings.task_assigned !== false) {
+      const assignee = personnel.find(p => p.name === nc.assignedTo);
+      if (assignee?.email) {
+        notificationsApi.sendNotificationEmail(assignee.email, `New task assigned: ${newTask.title}`,
+          `<p>Hi ${assignee.name},</p><p>You've been assigned a new task in Lab QMS: "<strong>${newTask.title}</strong>", due ${nc.dueDate}.</p>`);
+      }
+    }
+  };
+
   const updateDocuments = makeListUpdater(setDocuments, () => documents, (d) => documentToDb(d, personnel), (r) => documentFromDb(r, personnel), {
     create: (row) => eqaDocApi.createDocument(row),
     update: () => { throw new Error("Documents are not editable after creation in this build — delete and re-add if needed."); },
@@ -1113,7 +1151,7 @@ export default function App() {
           addTaskCommentAction={addTaskCommentAction} deleteTaskCommentAction={deleteTaskCommentAction}
           taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction}
           notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} />}
-        {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} />}
+        {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} createTaskFromNcAction={createTaskFromNcAction} tasks={tasks} />}
         {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "iqc" && <IQCPage qcMachines={qcMachines} updateQcMachines={updateQcMachines}
           qcParameters={qcParameters} updateQcParameters={updateQcParameters}
@@ -1768,7 +1806,7 @@ function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTempla
 }
 
 // ---------------- NC / CAPA Register ----------------
-function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, activeLaboratoryId }) {
+function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, activeLaboratoryId, createTaskFromNcAction, tasks }) {
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [showTrends, setShowTrends] = useState(false);
@@ -2050,6 +2088,19 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
                   <Field label="Target close date">
                     <input type="date" className={inputCls} style={inputStyle} value={n.dueDate || ""} onChange={e => setNc(n.id, { dueDate: e.target.value })} />
                   </Field>
+                  <div className="flex items-end pb-0.5">
+                    {n.linkedTaskId ? (
+                      <Badge color={COLORS.teal}>
+                        Task created{(() => { const t = tasks.find(x => x.id === n.linkedTaskId); return t ? ` · ${t.status}` : ""; })()}
+                      </Badge>
+                    ) : canEdit && (
+                      <button onClick={() => createTaskFromNcAction(n)} disabled={!n.assignedTo || !n.dueDate}
+                        className="text-xs px-2 py-1.5 rounded-md border disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 whitespace-nowrap"
+                        style={{ borderColor: COLORS.teal, color: COLORS.teal }} title={!n.assignedTo || !n.dueDate ? "Set Assigned to and Target close date first" : "Creates a task on this person's Tasks list, due on the target close date"}>
+                        <Plus size={12} /> Create task on their list
+                      </button>
+                    )}
+                  </div>
                   <Field label="Due time (optional)">
                     <input type="time" className={inputCls} style={inputStyle} value={n.dueTime || ""} onChange={e => setNc(n.id, { dueTime: e.target.value })} disabled={!n.dueDate} />
                   </Field>
