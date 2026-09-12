@@ -693,10 +693,16 @@ export default function App() {
    * it's used here to find the real row afterward.
    */
   const createNcFromEqaAction = async (eqaEvent) => {
-    const ncNumber = `NC-${String(ncs.length + 1).padStart(3, "0")}`;
     const sdiText = (eqaEvent.sdi !== null && eqaEvent.sdi !== undefined) ? Number(eqaEvent.sdi).toFixed(2) : "n/a";
+    let ncNumber;
+    try {
+      ncNumber = await ncApi.generateNcNumber(activeLaboratoryId);
+    } catch (e) {
+      alert("Could not generate an NC number.\n\n" + e.message);
+      return;
+    }
     const newNc = {
-      id: uid(), ncNumber, status: "Open", dateRaised: todayISO(),
+      id: uid(), ncNumber, status: "Open", dateRaised: todayISO(), raisedBy: currentUser.name,
       title: `EQA/PT failure — ${eqaEvent.parameter} (${eqaEvent.discipline})`,
       description: `Unsatisfactory EQA result for ${eqaEvent.parameter}, ${eqaEvent.provider || "provider not specified"}${eqaEvent.cycle ? " " + eqaEvent.cycle : ""}. Lab result ${eqaEvent.labResult}, peer mean ${eqaEvent.peerMean}, SDI ${sdiText}.`,
       source: "EQA/PT failure", severity: "Major",
@@ -1049,6 +1055,8 @@ export default function App() {
   const canSeeAuditBackup = isAdmin || isQaManager;
   /** Only Admin and QA Manager can browse the full staff roster — everyone else only ever sees their own record on the Personnel page. */
   const canSeeAllStaff = isAdmin || isQaManager;
+  /** Anyone can log an NC (title/description/date occurred only). Filling in the rest — clause, severity, root cause, assignment, close date — and seeing every logged NC is limited to lab/QA managers and their deputies, same role group as task assignment. */
+  const canManageNcs = TASK_ASSIGNER_ROLES.includes(currentUser.role);
 
   const NAV = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
@@ -1151,7 +1159,7 @@ export default function App() {
           addTaskCommentAction={addTaskCommentAction} deleteTaskCommentAction={deleteTaskCommentAction}
           taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction}
           notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} />}
-        {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} createTaskFromNcAction={createTaskFromNcAction} tasks={tasks} />}
+        {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} createTaskFromNcAction={createTaskFromNcAction} tasks={tasks} currentUser={currentUser} canManageNcs={canManageNcs} />}
         {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "iqc" && <IQCPage qcMachines={qcMachines} updateQcMachines={updateQcMachines}
           qcParameters={qcParameters} updateQcParameters={updateQcParameters}
@@ -1806,31 +1814,46 @@ function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTempla
 }
 
 // ---------------- NC / CAPA Register ----------------
-function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, activeLaboratoryId, createTaskFromNcAction, tasks }) {
+function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, activeLaboratoryId, createTaskFromNcAction, tasks, currentUser, canManageNcs }) {
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [showTrends, setShowTrends] = useState(false);
   const [showNcReportPicker, setShowNcReportPicker] = useState(false);
   const [selectedNcReportIds, setSelectedNcReportIds] = useState([]);
+  const [creating, setCreating] = useState(false);
 
-  const nextNcNumber = () => `NC-${String(ncs.length + 1).padStart(3, "0")}`;
-
-  const addNc = (draft) => {
-    const nc = {
-      id: uid(), ncNumber: nextNcNumber(), status: "Open", dateRaised: todayISO(),
-      rootCause: "", correctiveAction: "", preventiveAction: "", evidence: "", verifiedBy: "", closedDate: "",
-      effectivenessCheckDue: "", effectivenessCheckResult: "", effectivenessNotes: "", effectivenessVerifiedBy: "",
-      laboratoryId: activeLaboratoryId,
-      ...draft,
-    };
-    updateNcs([nc, ...ncs]);
-    setShowForm(false);
-    if (nc.assignedTo && notificationSettings.nc_assigned !== false) {
-      const assignee = personnel.find(p => p.name === nc.assignedTo);
-      if (assignee?.email) {
-        notificationsApi.sendNotificationEmail(assignee.email, `NC assigned to you: ${nc.title}`,
-          `<p>Hi ${assignee.name},</p><p>You've been assigned a nonconformity in Lab QMS: "<strong>${nc.title}</strong>" (${nc.ncNumber}), severity ${nc.severity || "not set"}.</p>`);
+  /**
+   * Always raised as the currently signed-in person — never a manual
+   * dropdown — so the audit trail of who actually logged an NC can't be
+   * misattributed. The NC number comes from generate_nc_number() (0037),
+   * not a client-side count, since a regular staff member's browser only
+   * ever sees their own NCs now and would compute the wrong next number.
+   */
+  const addNc = async (draft) => {
+    setCreating(true);
+    try {
+      const ncNumber = await ncApi.generateNcNumber(activeLaboratoryId);
+      const nc = {
+        id: uid(), ncNumber, status: "Open", dateRaised: todayISO(), raisedBy: currentUser.name,
+        rootCause: "", correctiveAction: "", preventiveAction: "", evidence: "", verifiedBy: "", closedDate: "",
+        effectivenessCheckDue: "", effectivenessCheckResult: "", effectivenessNotes: "", effectivenessVerifiedBy: "",
+        laboratoryId: activeLaboratoryId,
+        ...draft,
+      };
+      const synced = await updateNcs([nc, ...ncs]);
+      if (!synced) return;
+      setShowForm(false);
+      if (nc.assignedTo && notificationSettings.nc_assigned !== false) {
+        const assignee = personnel.find(p => p.name === nc.assignedTo);
+        if (assignee?.email) {
+          notificationsApi.sendNotificationEmail(assignee.email, `NC assigned to you: ${nc.title}`,
+            `<p>Hi ${assignee.name},</p><p>You've been assigned a nonconformity in Lab QMS: "<strong>${nc.title}</strong>" (${nc.ncNumber}), severity ${nc.severity || "not set"}.</p>`);
+        }
       }
+    } catch (e) {
+      alert("Could not log the nonconformity.\n\n" + e.message);
+    } finally {
+      setCreating(false);
     }
   };
   const setNc = (id, patch) => updateNcs(ncs.map(n => n.id === id ? { ...n, ...patch } : n));
@@ -1956,13 +1979,17 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Non-conformities & CAPA</h1>
         <div className="flex gap-2">
-          <button onClick={() => setShowTrends(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-            <Activity size={14} /> {showTrends ? "Hide" : "Show"} trends
-          </button>
-          <button onClick={() => { setShowNcReportPicker(v => !v); setSelectedNcReportIds(ncs.map(n => n.id)); }}
-            className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-            <Download size={14} /> Export report
-          </button>
+          {canManageNcs && (
+            <button onClick={() => setShowTrends(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+              <Activity size={14} /> {showTrends ? "Hide" : "Show"} trends
+            </button>
+          )}
+          {canManageNcs && (
+            <button onClick={() => { setShowNcReportPicker(v => !v); setSelectedNcReportIds(ncs.map(n => n.id)); }}
+              className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+              <Download size={14} /> Export report
+            </button>
+          )}
           {canEdit && (
             <button onClick={() => setShowForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
               <Plus size={14} /> Log nonconformity
@@ -1970,7 +1997,11 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
           )}
         </div>
       </div>
-      <p className="text-sm text-gray-500 mb-4">Full lifecycle: raise, investigate root cause, implement corrective/preventive action, verify, and close.</p>
+      <p className="text-sm text-gray-500 mb-4">
+        {canManageNcs
+          ? "Full lifecycle: raise, investigate root cause, implement corrective/preventive action, verify, and close."
+          : "Log a new nonconformity, and track the ones you've raised or that are assigned to you. Your QA Manager/Admin handles investigation, assignment, and close-out."}
+      </p>
 
       {showNcReportPicker && (
         <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
@@ -2042,7 +2073,8 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
         </div>
       )}
 
-      {showForm && canEdit && <NcForm personnel={personnel} existingNcs={ncs} onCancel={() => setShowForm(false)} onSave={addNc} />}
+      {showForm && canManageNcs && <NcForm personnel={personnel} existingNcs={ncs} onCancel={() => setShowForm(false)} onSave={addNc} creating={creating} />}
+      {showForm && canEdit && !canManageNcs && <QuickNcForm onCancel={() => setShowForm(false)} onSave={addNc} creating={creating} />}
 
       <div className="space-y-3">
         {ncs.length === 0 && <Empty text="No nonconformities logged yet." />}
@@ -2057,7 +2089,7 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
               {n.relatedNcId && <Badge color={COLORS.amber}>Recurrence</Badge>}
               {n.clauseId && <span className="text-xs text-gray-400">Clause {n.clauseId}</span>}
             </button>
-            {expanded === n.id && (
+            {expanded === n.id && (canManageNcs ? (
               <div className="px-5 pb-5 pt-1 border-t" style={{ borderColor: "#EEF3F1" }}>
                 <div className="grid grid-cols-2 gap-3 mt-3">
                   <Field label="Description">
@@ -2174,7 +2206,34 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
                   <button onClick={() => removeNc(n.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Delete record</button>
                 </div>
               </div>
-            )}
+            ) : (
+              <div className="px-5 pb-5 pt-1 border-t text-sm" style={{ borderColor: "#EEF3F1" }}>
+                <div className="grid grid-cols-2 gap-3 mt-3 text-xs">
+                  <div><div className="text-gray-400 mb-0.5">Description</div><div>{n.description || "—"}</div></div>
+                  <div><div className="text-gray-400 mb-0.5">Date occurred</div><div>{n.dateOccurred || "—"}</div></div>
+                  <div><div className="text-gray-400 mb-0.5">Raised by</div><div>{n.raisedBy}</div></div>
+                  <div><div className="text-gray-400 mb-0.5">Date reported</div><div>{n.dateRaised}</div></div>
+                  <div><div className="text-gray-400 mb-0.5">Assigned to</div><div>{n.assignedTo || "Not yet assigned"}</div></div>
+                  <div><div className="text-gray-400 mb-0.5">Target close date</div><div>{n.dueDate || "Not yet set"}</div></div>
+                  {n.source && <div><div className="text-gray-400 mb-0.5">Source</div><div>{n.source}</div></div>}
+                  {n.clauseId && <div><div className="text-gray-400 mb-0.5">Related clause</div><div>{n.clauseId}</div></div>}
+                </div>
+                {n.linkedTaskId && (
+                  <div className="mt-2">
+                    <Badge color={COLORS.teal}>
+                      On {n.assignedTo === currentUser?.name ? "your" : `${n.assignedTo}'s`} task list{(() => { const t = tasks.find(x => x.id === n.linkedTaskId); return t ? ` · ${t.status}` : ""; })()}
+                    </Badge>
+                  </div>
+                )}
+                {(n.rootCause || n.correctiveAction) && (
+                  <div className="mt-3 pt-3 border-t text-xs" style={{ borderColor: "#EEF3F1" }}>
+                    {n.rootCause && <div className="mb-2"><div className="text-gray-400 mb-0.5">Root cause analysis</div><div>{n.rootCause}</div></div>}
+                    {n.correctiveAction && <div><div className="text-gray-400 mb-0.5">Corrective action</div><div>{n.correctiveAction}</div></div>}
+                  </div>
+                )}
+                <p className="text-[11px] text-gray-400 mt-3">Investigation, assignment, and close-out are handled by your QA Manager/Admin.</p>
+              </div>
+            ))}
           </div>
         ))}
       </div>
@@ -2196,16 +2255,16 @@ const ncMatchScore = (draftTitle, draftClauseId, draftSource, candidate) => {
   return score;
 };
 
-function NcForm({ personnel, existingNcs, onCancel, onSave }) {
+function NcForm({ personnel, existingNcs, onCancel, onSave, creating }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [dateOccurred, setDateOccurred] = useState(todayISO());
   const [clauseId, setClauseId] = useState("");
   const [severity, setSeverity] = useState("Minor");
   const [source, setSource] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [dueTime, setDueTime] = useState("");
-  const [raisedBy, setRaisedBy] = useState("");
   const [relatedNcId, setRelatedNcId] = useState("");
 
   const suggestions = useMemo(() => {
@@ -2240,6 +2299,7 @@ function NcForm({ personnel, existingNcs, onCancel, onSave }) {
       )}
       <Field label="Description"><textarea className={inputCls} style={inputStyle} rows={2} value={description} onChange={e => setDescription(e.target.value)} /></Field>
       <div className="grid grid-cols-3 gap-3">
+        <Field label="Date occurred"><input type="date" className={inputCls} style={inputStyle} value={dateOccurred} onChange={e => setDateOccurred(e.target.value)} /></Field>
         <Field label="Related clause">
           <select className={inputCls} style={inputStyle} value={clauseId} onChange={e => setClauseId(e.target.value)}>
             <option value="">Select…</option>{ALL_SUBCLAUSES.map(s => <option key={s.id} value={s.id}>{s.id} — {s.title}</option>)}
@@ -2257,11 +2317,6 @@ function NcForm({ personnel, existingNcs, onCancel, onSave }) {
             <option>Complaint</option><option>Equipment/IQC issue</option><option>Staff observation</option><option>Other</option>
           </select>
         </Field>
-        <Field label="Raised by">
-          <select className={inputCls} style={inputStyle} value={raisedBy} onChange={e => setRaisedBy(e.target.value)}>
-            <option value="">Select…</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-          </select>
-        </Field>
         <Field label="Assign investigation to">
           <select className={inputCls} style={inputStyle} value={assignedTo} onChange={e => setAssignedTo(e.target.value)}>
             <option value="">Unassigned</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
@@ -2272,8 +2327,29 @@ function NcForm({ personnel, existingNcs, onCancel, onSave }) {
       </div>
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button onClick={() => title.trim() && onSave({ title, description, clauseId, severity, source, assignedTo, dueDate, dueTime: dueDate ? dueTime : "", raisedBy, relatedNcId })}
-          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Log nonconformity</button>
+        <button disabled={creating} onClick={() => title.trim() && onSave({ title, description, dateOccurred, clauseId, severity, source, assignedTo, dueDate, dueTime: dueDate ? dueTime : "", relatedNcId })}
+          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-50" style={{ background: COLORS.teal }}><Save size={14} /> {creating ? "Logging…" : "Log nonconformity"}</button>
+      </div>
+    </div>
+  );
+}
+
+/** Bare-bones NC entry available to every non-Viewer role: title, description, date occurred. Everything else (clause, severity, assignment, close date) is filled in afterward by a lab/QA manager or deputy — see canManageNcs. */
+function QuickNcForm({ onCancel, onSave, creating }) {
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
+  const [dateOccurred, setDateOccurred] = useState(todayISO());
+
+  return (
+    <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+      <Field label="Title"><input className={inputCls} style={inputStyle} value={title} onChange={e => setTitle(e.target.value)} placeholder="Short summary of what happened" /></Field>
+      <Field label="Description"><textarea className={inputCls} style={inputStyle} rows={3} value={description} onChange={e => setDescription(e.target.value)} placeholder="What happened, where, and any immediate action taken" /></Field>
+      <Field label="Date occurred"><input type="date" className={inputCls} style={inputStyle} value={dateOccurred} onChange={e => setDateOccurred(e.target.value)} /></Field>
+      <p className="text-[11px] text-gray-400 mt-1 mb-2">The report date is recorded automatically as today, and this will be logged under your name. Your QA Manager/Admin will follow up with root cause, assignment, and a close date.</p>
+      <div className="flex justify-end gap-2 mt-2">
+        <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
+        <button disabled={creating} onClick={() => title.trim() && onSave({ title, description, dateOccurred })}
+          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-50" style={{ background: COLORS.teal }}><Save size={14} /> {creating ? "Logging…" : "Log nonconformity"}</button>
       </div>
     </div>
   );
