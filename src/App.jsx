@@ -169,6 +169,8 @@ const COMPETENCY_RESULT = ["Competent", "Not yet competent", "Pass", "Fail", "Co
 const EQUIPMENT_CATEGORIES = ["Hematology analyser", "Chemistry analyser", "Immunoassay analyser", "Microscope", "Centrifuge", "Refrigerator/Freezer", "Incubator", "Pipette", "POCT device", "Other"];
 const EQUIPMENT_STATUS = ["In service", "Out of service", "Under qualification", "Decommissioned"];
 const EQUIPMENT_RECORD_TYPES = ["IQ (Installation Qualification)", "OQ (Operational Qualification)", "PQ (Performance Qualification)", "Calibration", "Preventive maintenance", "Corrective maintenance / repair", "Verification"];
+/** IQ/OQ/PQ are one-time qualifications done at commissioning to establish a machine as ready for operation — not recurring, so they have no "next due" date the way calibration/maintenance/verification do. */
+const EQUIPMENT_RECORD_TYPES_NO_DUE_DATE = ["IQ (Installation Qualification)", "OQ (Operational Qualification)", "PQ (Performance Qualification)"];
 const RECORD_RESULT = ["Pass", "Fail", "Conditional pass", "Pending"];
 
 // IQC / EQA (Clauses 7.3.7 Quality control, 7.3.7.3 EQA / interlaboratory comparison)
@@ -1059,8 +1061,9 @@ export default function App() {
   const canManageClauseStatus = TASK_ASSIGNER_ROLES.includes(currentUser.role);
   const canPublishControlledDocs = DOCUMENT_PUBLISHER_ROLES.includes(currentUser.role);
   const canSeeAuditBackup = isAdmin || isQaManager;
-  /** Deleting an EQA/PT result is a data-integrity action, not routine data entry — restricted to Admin and QA Manager specifically, not their deputies (unlike most other manager-tier actions in this app). */
-  const canDeleteEqaResults = isAdmin || isQaManager;
+  /** Deleting any saved record (equipment, machines, runs, NCs, risks, documents, etc.) is a data-integrity action, not routine data entry — restricted to Admin and QA Manager specifically, not their deputies, across every page in the app. */
+  const canDeleteRecords = isAdmin || isQaManager;
+  const canDeleteEqaResults = canDeleteRecords;
   /** Only Admin and QA Manager can browse the full staff roster — everyone else only ever sees their own record on the Personnel page. */
   const canSeeAllStaff = isAdmin || isQaManager;
   /** Anyone can log an NC (title/description/date occurred only). Filling in the rest — clause, severity, root cause, assignment, close date — and seeing every logged NC is limited to lab/QA managers and their deputies, same role group as task assignment. */
@@ -1166,28 +1169,28 @@ export default function App() {
           personnel={personnel} canEdit={canEdit} canAssignTasks={canAssignTasks} taskComments={taskComments} currentUser={currentUser}
           addTaskCommentAction={addTaskCommentAction} deleteTaskCommentAction={deleteTaskCommentAction}
           taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction}
-          notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} />}
-        {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} createTaskFromNcAction={createTaskFromNcAction} tasks={tasks} currentUser={currentUser} canManageNcs={canManageNcs} />}
-        {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} activeLaboratoryId={activeLaboratoryId} />}
+          notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords} />}
+        {tab === "ncs" && <NCRegister ncs={ncs} updateNcs={updateNcs} personnel={personnel} canEdit={canEdit} notificationSettings={notificationSettings} activeLaboratoryId={activeLaboratoryId} createTaskFromNcAction={createTaskFromNcAction} tasks={tasks} currentUser={currentUser} canManageNcs={canManageNcs} canDeleteRecords={canDeleteRecords} />}
+        {tab === "risks" && <RiskRegister risks={risks} updateRisks={updateRisks} personnel={personnel} canEdit={canEdit} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords} />}
         {tab === "iqc" && <IQCPage qcMachines={qcMachines} updateQcMachines={updateQcMachines}
           qcParameters={qcParameters} updateQcParameters={updateQcParameters}
           qcControls={qcControls} updateQcControls={updateQcControls}
           qcRuns={qcRuns} updateQcRuns={updateQcRuns} personnel={personnel}
           canEdit={canEdit} canAuthorizeIQC={canAuthorizeIQC} currentUser={currentUser}
           authorizeQcRunAction={authorizeQcRunAction} bulkImportQcRuns={bulkImportQcRuns}
-          equipment={equipment} updateEquipment={updateEquipment} activeLaboratoryId={activeLaboratoryId} />}
+          equipment={equipment} updateEquipment={updateEquipment} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords} />}
         {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit}
           ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} activeLaboratoryId={activeLaboratoryId} laboratories={laboratories}
-          eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms} programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} canDeleteEqaResults={canDeleteEqaResults} />}
-        {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} currentUser={currentUser} confirmCompetencyAssessmentAction={confirmCompetencyAssessmentAction} activeLaboratoryId={activeLaboratoryId} />}
+          eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms} programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} canDeleteEqaResults={canDeleteEqaResults} canDeleteRecords={canDeleteRecords} />}
+        {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} currentUser={currentUser} confirmCompetencyAssessmentAction={confirmCompetencyAssessmentAction} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords} />}
         {tab === "equipment" && <Equipment equipment={equipment} updateEquipment={updateEquipment}
           equipmentRecords={equipmentRecords} updateEquipmentRecords={updateEquipmentRecords} personnel={personnel} canEdit={canEdit}
           equipmentDowntime={equipmentDowntime} reportDowntimeAction={reportDowntimeAction} resolveDowntimeAction={resolveDowntimeAction}
-          qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} qcRuns={qcRuns} activeLaboratoryId={activeLaboratoryId} />}
+          qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} qcRuns={qcRuns} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords} />}
         {tab === "documents" && <Documents documents={documents} updateDocuments={updateDocuments} personnel={personnel}
           currentUser={currentUser} canEdit={canEdit} canPublishControlledDocs={canPublishControlledDocs}
           publishControlledDocumentAction={publishControlledDocumentAction}
-          documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} activeLaboratoryId={activeLaboratoryId} />}
+          documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords} />}
         {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canSeeAllStaff={canSeeAllStaff} canEdit={canEdit}
           laboratories={laboratories} personnelLaboratories={personnelLaboratories} assignPersonnelToLabAction={assignPersonnelToLabAction} unassignPersonnelFromLabAction={unassignPersonnelFromLabAction} />}
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} addManagementReview={addManagementReview}
@@ -1606,7 +1609,7 @@ function MiniTaskForm({ personnel, onSave, onCancel }) {
 }
 
 // ---------------- Tasks ----------------
-function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks, taskComments, currentUser, addTaskCommentAction, deleteTaskCommentAction, taskTemplates, createTaskTemplateAction, deleteTaskTemplateAction, notificationSettings, activeLaboratoryId }) {
+function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionAction, personnel, canEdit, canAssignTasks, taskComments, currentUser, addTaskCommentAction, deleteTaskCommentAction, taskTemplates, createTaskTemplateAction, deleteTaskTemplateAction, notificationSettings, activeLaboratoryId, canDeleteRecords }) {
   const [showForm, setShowForm] = useState(false);
   const [filterStatus, setFilterStatus] = useState("All");
   const [filterAssignee, setFilterAssignee] = useState("All");
@@ -1653,7 +1656,7 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
         </select>
       </div>
 
-      {showForm && canAssignTasks && <TaskForm personnel={personnel} onCancel={() => setShowForm(false)} onSave={addTask} taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction} />}
+      {showForm && canAssignTasks && <TaskForm personnel={personnel} onCancel={() => setShowForm(false)} onSave={addTask} taskTemplates={taskTemplates} createTaskTemplateAction={createTaskTemplateAction} deleteTaskTemplateAction={deleteTaskTemplateAction} canDeleteRecords={canDeleteRecords} />}
 
       <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
         {filtered.length === 0 && <Empty text="No tasks match this view." />}
@@ -1690,7 +1693,7 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
               <button onClick={() => setCommentsOpenFor(commentsOpenFor === t.id ? null : t.id)} className="text-xs text-gray-400 flex items-center gap-1 whitespace-nowrap">
                 {commentsForTask.length} comment{commentsForTask.length !== 1 ? "s" : ""} {commentsOpenFor === t.id ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
               </button>
-              {canAssignTasks && <button onClick={() => removeTask(t.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+              {canDeleteRecords && <button onClick={() => removeTask(t.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
             </div>
             {commentsOpenFor === t.id && (
               <div className="px-5 pb-3 pl-12" style={{ background: COLORS.bg }}>
@@ -1726,7 +1729,7 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
   );
 }
 
-function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTemplateAction, deleteTaskTemplateAction }) {
+function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTemplateAction, deleteTaskTemplateAction, canDeleteRecords }) {
   const [title, setTitle] = useState("");
   const [assignedTo, setAssignedTo] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -1765,7 +1768,7 @@ function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTempla
           {taskTemplates.map(t => (
             <div key={t.id} className="flex items-center justify-between text-xs">
               <span>{t.title}</span>
-              <button onClick={() => deleteTaskTemplateAction(t.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>
+              {canDeleteRecords && <button onClick={() => deleteTaskTemplateAction(t.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>}
             </div>
           ))}
         </div>
@@ -1822,7 +1825,7 @@ function TaskForm({ personnel, onSave, onCancel, taskTemplates, createTaskTempla
 }
 
 // ---------------- NC / CAPA Register ----------------
-function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, activeLaboratoryId, createTaskFromNcAction, tasks, currentUser, canManageNcs }) {
+function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, activeLaboratoryId, createTaskFromNcAction, tasks, currentUser, canManageNcs, canDeleteRecords }) {
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [showTrends, setShowTrends] = useState(false);
@@ -2219,7 +2222,7 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
                   </div>
                 </div>
                 <div className="flex justify-end mt-2">
-                  <button onClick={() => removeNc(n.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Delete record</button>
+                  {canDeleteRecords && <button onClick={() => removeNc(n.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Delete record</button>}
                 </div>
               </div>
             ) : (
@@ -2781,7 +2784,7 @@ function ResetPasswordControl({ personnelId }) {
 const RISK_LEVEL_COLOR = { Critical: COLORS.red, High: COLORS.red, Medium: COLORS.amber, Low: COLORS.teal };
 const RISK_CATEGORIES = ["Pre-examination", "Examination", "Post-examination", "IT / Data", "Facilities", "Personnel", "Equipment", "Supply chain", "Other"];
 
-function RiskRegister({ risks, updateRisks, personnel, canEdit, activeLaboratoryId }) {
+function RiskRegister({ risks, updateRisks, personnel, canEdit, activeLaboratoryId, canDeleteRecords }) {
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [filterStatus, setFilterStatus] = useState("All");
@@ -2876,7 +2879,7 @@ function RiskRegister({ risks, updateRisks, personnel, canEdit, activeLaboratory
                     <input type="date" className={inputCls} style={inputStyle} value={r.nextReviewDate || ""} onChange={e => setRisk(r.id, { nextReviewDate: e.target.value })} />
                   </Field>
                 </div>
-                {canEdit && (
+                {canDeleteRecords && (
                   <div className="flex justify-end mt-2">
                     <button onClick={() => removeRisk(r.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Delete record</button>
                   </div>
@@ -2939,7 +2942,7 @@ function RiskForm({ personnel, onSave, onCancel }) {
   );
 }
 
-function Competency({ competency, updateCompetency, personnel, canEdit, currentUser, confirmCompetencyAssessmentAction, activeLaboratoryId }) {
+function Competency({ competency, updateCompetency, personnel, canEdit, currentUser, confirmCompetencyAssessmentAction, activeLaboratoryId, canDeleteRecords }) {
   const [showForm, setShowForm] = useState(false);
   const [filterPerson, setFilterPerson] = useState("All");
   const [filterType, setFilterType] = useState("All");
@@ -3050,7 +3053,7 @@ function Competency({ competency, updateCompetency, personnel, canEdit, currentU
                 </select>
                 <span className="text-xs text-gray-400">{c.date}</span>
                 <Badge color={st.color}>{c.dueDate ? `${st.label} · next ${c.dueDate}` : st.label}</Badge>
-                <button onClick={() => removeRecord(c.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>
+                {canDeleteRecords && <button onClick={() => removeRecord(c.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
               </div>
               {c.notes && <div className="text-xs text-gray-500 mt-1 pl-7">{c.notes}</div>}
               <div className="pl-7 mt-1.5 flex items-center gap-2">
@@ -3131,7 +3134,7 @@ function CompetencyForm({ personnel, existingTitles, onSave, onCancel }) {
 }
 
 // ---------------- Equipment & Records (Clauses 6.3 / 6.4: IQ, OQ, PQ, calibration, maintenance) ----------------
-function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipmentRecords, personnel, canEdit, equipmentDowntime, reportDowntimeAction, resolveDowntimeAction, qcMachines, qcParameters, qcControls, qcRuns, activeLaboratoryId }) {
+function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipmentRecords, personnel, canEdit, equipmentDowntime, reportDowntimeAction, resolveDowntimeAction, qcMachines, qcParameters, qcControls, qcRuns, activeLaboratoryId, canDeleteRecords }) {
   const [showEquipForm, setShowEquipForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [recordDraftFor, setRecordDraftFor] = useState(null);
@@ -3310,7 +3313,7 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
                           </div>
                           {r.result && <Badge color={r.result === "Fail" ? COLORS.red : r.result === "Conditional pass" ? COLORS.amber : COLORS.teal}>{r.result}</Badge>}
                           {rds && <Badge color={rds.color}>{rds.label === "OK" ? `Due ${r.dueDate}` : `${rds.label} ${r.dueDate}`}</Badge>}
-                          <button onClick={() => removeRecord(r.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>
+                          {canDeleteRecords && <button onClick={() => removeRecord(r.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>}
                         </div>
                       );
                     })}
@@ -3367,9 +3370,11 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
                     ))}
                   </div>
 
-                  <div className="flex justify-end mt-3">
-                    <button onClick={() => removeEquipment(eq.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Remove equipment</button>
-                  </div>
+                  {canDeleteRecords && (
+                    <div className="flex justify-end mt-3">
+                      <button onClick={() => removeEquipment(eq.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Remove equipment</button>
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -3426,6 +3431,12 @@ function EquipmentRecordForm({ personnel, onSave, onCancel }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
 
+  const isQualification = EQUIPMENT_RECORD_TYPES_NO_DUE_DATE.includes(type);
+  const handleTypeChange = (newType) => {
+    setType(newType);
+    if (EQUIPMENT_RECORD_TYPES_NO_DUE_DATE.includes(newType)) setDueDate("");
+  };
+
   const handleSave = async () => {
     setUploadError("");
     setUploading(true);
@@ -3434,7 +3445,7 @@ function EquipmentRecordForm({ personnel, onSave, onCancel }) {
       if (mode === "upload" && file) {
         storagePath = await storageApi.uploadDocumentFile(file, "equipment");
       }
-      onSave({ type, date, performedBy, performedByExternal: performedByExternal.trim(), dueDate, result, documentRef, notes, url: mode === "link" ? url : "", storagePath });
+      onSave({ type, date, performedBy, performedByExternal: performedByExternal.trim(), dueDate: isQualification ? "" : dueDate, result, documentRef, notes, url: mode === "link" ? url : "", storagePath });
     } catch (e) {
       setUploadError(e.message);
     } finally {
@@ -3445,7 +3456,7 @@ function EquipmentRecordForm({ personnel, onSave, onCancel }) {
   return (
     <div className="mb-3 p-3 rounded-md" style={{ background: COLORS.mint }}>
       <div className="grid grid-cols-2 gap-2 mb-2">
-        <select value={type} onChange={e => setType(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+        <select value={type} onChange={e => handleTypeChange(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
           {EQUIPMENT_RECORD_TYPES.map(t => <option key={t}>{t}</option>)}
         </select>
         <div>
@@ -3462,7 +3473,11 @@ function EquipmentRecordForm({ personnel, onSave, onCancel }) {
           )}
         </div>
         <input type="date" value={date} onChange={e => setDate(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} title="Date performed" />
-        <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} title="Next due date" />
+        {isQualification ? (
+          <div className="text-xs text-gray-400 flex items-center px-1" title="IQ/OQ/PQ are one-time qualifications done at commissioning — no recurring due date applies">No due date (one-time qualification)</div>
+        ) : (
+          <input type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} title="Next due date" />
+        )}
         <select value={result} onChange={e => setResult(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
           <option value="">Result…</option>{RECORD_RESULT.map(r => <option key={r}>{r}</option>)}
         </select>
@@ -3519,7 +3534,7 @@ function AuthorizeControl({ run, currentUser, canAuthorize, onAuthorize }) {
 }
 
 // ---------------- IQC & Levey-Jennings (Clause 7.3.7 Quality control) ----------------
-function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns, equipment, updateEquipment, activeLaboratoryId }) {
+function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns, equipment, updateEquipment, activeLaboratoryId, canDeleteRecords }) {
   const [showMachineForm, setShowMachineForm] = useState(false);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [selectedMachineId, setSelectedMachineId] = useState(qcMachines[0]?.id || null);
@@ -3822,7 +3837,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                 <button onClick={() => setShowParamForm(v => !v)} className="text-xs flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
                   <Plus size={13} /> Add parameter
                 </button>
-                <button onClick={() => removeMachine(selectedMachine.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={13} /> Remove machine</button>
+                {canDeleteRecords && <button onClick={() => removeMachine(selectedMachine.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={13} /> Remove machine</button>}
               </div>
             )}
           </div>
@@ -3964,7 +3979,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                               </div>
                               <div className="ml-auto flex items-center gap-2">
                                 <AuthorizeControl run={r} currentUser={currentUser} canAuthorize={canAuthorizeIQC} onAuthorize={() => authorizeQcRunAction(r.id)} />
-                                {canEdit && <button onClick={() => removeRun(r.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>}
+                                {canDeleteRecords && <button onClick={() => removeRun(r.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>}
                               </div>
                               {r.comment && <div className="w-full text-xs text-gray-400 pl-24">{r.comment}</div>}
                             </div>
@@ -3994,7 +4009,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                                 {c.expiryDate < todayISO() ? "Expired" : "Expires"} {c.expiryDate}
                               </Badge>
                             )}
-                            {canEdit && <button onClick={() => removeControl(c.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>}
+                            {canDeleteRecords && <button onClick={() => removeControl(c.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>}
                           </div>
                         ))}
                       </div>
@@ -4011,7 +4026,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                     </div>
 
                     <div className="flex justify-end mt-3">
-                      {canEdit && <button onClick={() => removeParameter(param.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Remove parameter</button>}
+                      {canDeleteRecords && <button onClick={() => removeParameter(param.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Remove parameter</button>}
                     </div>
                   </div>
                 );
@@ -4636,7 +4651,7 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
       {showManagePrograms && (
         <ManageEqaPrograms laboratories={laboratories} eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms}
           programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} activeLaboratoryId={activeLaboratoryId}
-          onClose={() => setShowManagePrograms(false)} />
+          onClose={() => setShowManagePrograms(false)} canDeleteRecords={canDeleteRecords} />
       )}
 
       <div className="bg-white rounded-lg border overflow-x-auto" style={{ borderColor: "#E1EBE8" }}>
@@ -4882,7 +4897,7 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
 }
 
 // ---------------- Manage the EQA program catalog (add/remove programs and their analytes) ----------------
-function ManageEqaPrograms({ laboratories, eqaPrograms, updateEqaPrograms, programAnalytes, updateProgramAnalytes, activeLaboratoryId, onClose }) {
+function ManageEqaPrograms({ laboratories, eqaPrograms, updateEqaPrograms, programAnalytes, updateProgramAnalytes, activeLaboratoryId, onClose, canDeleteRecords }) {
   const [newProvider, setNewProvider] = useState("");
   const [newProgramName, setNewProgramName] = useState("");
   const [newCycle, setNewCycle] = useState("");
@@ -4939,13 +4954,13 @@ function ManageEqaPrograms({ laboratories, eqaPrograms, updateEqaPrograms, progr
                 <div className="flex items-center gap-2">
                   <span className="text-sm font-medium">{p.provider} — {p.programName} (Cycle {p.cycle})</span>
                   <span className="text-xs text-gray-400 ml-auto">{p.startDate}{p.startDate && p.endDate ? " – " : ""}{p.endDate}</span>
-                  <button onClick={() => removeProgram(p.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>
+                  {canDeleteRecords && <button onClick={() => removeProgram(p.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>}
                 </div>
                 <div className="flex flex-wrap gap-1.5 mt-2">
                   {analytes.map(a => (
                     <span key={a.id} className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: COLORS.mint, color: COLORS.teal }}>
                       {a.analyte}
-                      <button onClick={() => removeAnalyte(a.id)} className="hover:text-red-500">×</button>
+                      {canDeleteRecords && <button onClick={() => removeAnalyte(a.id)} className="hover:text-red-500">×</button>}
                     </span>
                   ))}
                   {newAnalyteFor === p.id ? (
@@ -5072,7 +5087,7 @@ function DocumentLink({ title, url, storagePath, className }) {
   );
 }
 
-function Documents({ documents, updateDocuments, personnel, currentUser, canEdit, canPublishControlledDocs, publishControlledDocumentAction, documentAcknowledgments, acknowledgeDocumentAction, activeLaboratoryId }) {
+function Documents({ documents, updateDocuments, personnel, currentUser, canEdit, canPublishControlledDocs, publishControlledDocumentAction, documentAcknowledgments, acknowledgeDocumentAction, activeLaboratoryId, canDeleteRecords }) {
   const [section, setSection] = useState("controlled");
   const [showControlledForm, setShowControlledForm] = useState(false);
   const [showPersonalForm, setShowPersonalForm] = useState(false);
@@ -5316,7 +5331,7 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
                       {history.length} earlier version{history.length !== 1 ? "s" : ""} {expandedCode === code ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                     </button>
                   )}
-                  {canPublishControlledDocs && <button onClick={() => removeDoc(current.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+                  {canDeleteRecords && <button onClick={() => removeDoc(current.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
                 </div>
 
                 <div className="px-5 pb-3 flex items-center gap-2 flex-wrap">
@@ -5350,7 +5365,7 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
                         <Badge color="#9AA5A3">Superseded</Badge>
                         <DocumentLink title={h.title} url={h.url} storagePath={h.storagePath} className="underline" />
                         <span>v{h.version} · {h.uploadedAt}</span>
-                        {canPublishControlledDocs && <button onClick={() => removeDoc(h.id)} className="ml-auto text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>}
+                        {canDeleteRecords && <button onClick={() => removeDoc(h.id)} className="ml-auto text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>}
                       </div>
                     ))}
                   </div>
@@ -5384,7 +5399,7 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
                       <DocumentLink title={d.title} url={d.url} storagePath={d.storagePath} className="text-sm truncate block" />
                       <div className="text-xs text-gray-400 truncate">{d.category} · Uploaded {d.uploadedAt}{d.notes ? ` · ${d.notes}` : ""}</div>
                     </div>
-                    {canEdit && <button onClick={() => removeDoc(d.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+                    {canDeleteRecords && <button onClick={() => removeDoc(d.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
                   </div>
                 ))}
               </div>
@@ -5413,7 +5428,7 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
                   <div className="text-xs text-gray-400 truncate">{d.relatedTo}{d.relatedTo ? " · " : ""}Uploaded by {d.uploadedBy} · {d.uploadedAt}</div>
                 </div>
                 <Badge color={COLORS.teal}>{d.category}</Badge>
-                {canEdit && <button onClick={() => removeDoc(d.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+                {canDeleteRecords && <button onClick={() => removeDoc(d.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
               </div>
             ))}
           </div>
