@@ -118,6 +118,11 @@ export const downtimeFromDb = (row, personnel) => ({
   resolvedAt: row.resolved_at || "",
   resolutionNotes: row.resolution_notes || "",
   reportedBy: idToName(personnel, row.reported_by),
+  sectionInchargeName: idToName(personnel, row.section_incharge_id),
+  sectionInchargeInformedAt: row.section_incharge_informed_at || "",
+  serviceContactMethod: row.service_contact_method || "",
+  serviceContactDetail: row.service_contact_detail || "",
+  serviceInformedAt: row.service_informed_at || "",
   laboratoryId: row.laboratory_id,
 });
 

@@ -805,9 +805,17 @@ export default function App() {
   };
 
   /** Reporting downtime automatically marks the equipment Out of service server-side (0012 trigger) — reflected here so the UI doesn't need a separate round trip. */
-  const reportDowntimeAction = async (equipmentId, reason) => {
+  const reportDowntimeAction = async (equipmentId, reason, sectionInchargeName, serviceContactMethod, serviceContactDetail) => {
     try {
-      const row = await downtimeApi.reportDowntime({ equipment_id: equipmentId, reason, reported_by: nameToId(personnel, currentUser.name), laboratory_id: activeLaboratoryId });
+      const now = new Date().toISOString();
+      const row = await downtimeApi.reportDowntime({
+        equipment_id: equipmentId, reason, reported_by: nameToId(personnel, currentUser.name), laboratory_id: activeLaboratoryId,
+        section_incharge_id: sectionInchargeName ? nameToId(personnel, sectionInchargeName) : null,
+        section_incharge_informed_at: sectionInchargeName ? now : null,
+        service_contact_method: serviceContactMethod || null,
+        service_contact_detail: serviceContactMethod ? (serviceContactDetail || "").trim() || null : null,
+        service_informed_at: serviceContactMethod ? now : null,
+      });
       setEquipmentDowntime(prev => [downtimeFromDb(row, personnel), ...prev]);
       setEquipment(prev => prev.map(e => e.id === equipmentId ? { ...e, status: "Out of service" } : e));
     } catch (e) {
@@ -3139,6 +3147,9 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
   const [expanded, setExpanded] = useState(null);
   const [recordDraftFor, setRecordDraftFor] = useState(null);
   const [downtimeReasonDraft, setDowntimeReasonDraft] = useState({});
+  const [downtimeInchargeDraft, setDowntimeInchargeDraft] = useState({});
+  const [downtimeServiceMethodDraft, setDowntimeServiceMethodDraft] = useState({});
+  const [downtimeServiceDetailDraft, setDowntimeServiceDetailDraft] = useState({});
   const [resolveNotesDraft, setResolveNotesDraft] = useState({});
   const [showDowntimeFormFor, setShowDowntimeFormFor] = useState(null);
 
@@ -3334,13 +3345,39 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
                           onChange={e => setDowntimeReasonDraft(prev => ({ ...prev, [eq.id]: e.target.value }))}
                           placeholder="e.g. Reagent probe fault — technician called" />
                       </Field>
+                      <div className="grid grid-cols-2 gap-2">
+                        <Field label="Section incharge informed">
+                          <select className={inputCls} style={inputStyle} value={downtimeInchargeDraft[eq.id] || ""}
+                            onChange={e => setDowntimeInchargeDraft(prev => ({ ...prev, [eq.id]: e.target.value }))}>
+                            <option value="">Not yet informed</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                          </select>
+                        </Field>
+                        <Field label="Service engineer contacted via">
+                          <select className={inputCls} style={inputStyle} value={downtimeServiceMethodDraft[eq.id] || ""}
+                            onChange={e => setDowntimeServiceMethodDraft(prev => ({ ...prev, [eq.id]: e.target.value }))}>
+                            <option value="">Not yet contacted</option>
+                            <option>Viber group</option><option>Individually</option>
+                          </select>
+                        </Field>
+                      </div>
+                      {downtimeServiceMethodDraft[eq.id] && (
+                        <Field label={downtimeServiceMethodDraft[eq.id] === "Viber group" ? "Which Viber group" : "Engineer's name / contact"}>
+                          <input className={inputCls} style={inputStyle} value={downtimeServiceDetailDraft[eq.id] || ""}
+                            onChange={e => setDowntimeServiceDetailDraft(prev => ({ ...prev, [eq.id]: e.target.value }))}
+                            placeholder={downtimeServiceMethodDraft[eq.id] === "Viber group" ? "e.g. Biorad Service Team" : "e.g. Ahmed — Biorad field engineer"} />
+                        </Field>
+                      )}
+                      <p className="text-[11px] text-gray-400 mb-2">Informed date/time is stamped automatically as now, for whichever of these you fill in.</p>
                       <div className="flex justify-end gap-2">
                         <button onClick={() => setShowDowntimeFormFor(null)} className="text-xs px-2 py-1 text-gray-500">Cancel</button>
                         <button onClick={() => {
                           const reason = (downtimeReasonDraft[eq.id] || "").trim();
                           if (!reason) return;
-                          reportDowntimeAction(eq.id, reason);
+                          reportDowntimeAction(eq.id, reason, downtimeInchargeDraft[eq.id] || "", downtimeServiceMethodDraft[eq.id] || "", downtimeServiceDetailDraft[eq.id] || "");
                           setDowntimeReasonDraft(prev => ({ ...prev, [eq.id]: "" }));
+                          setDowntimeInchargeDraft(prev => ({ ...prev, [eq.id]: "" }));
+                          setDowntimeServiceMethodDraft(prev => ({ ...prev, [eq.id]: "" }));
+                          setDowntimeServiceDetailDraft(prev => ({ ...prev, [eq.id]: "" }));
                           setShowDowntimeFormFor(null);
                         }} className="text-xs px-3 py-1 rounded-md text-white" style={{ background: COLORS.red }}>Confirm out of service</button>
                       </div>
@@ -3358,6 +3395,13 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
                           </div>
                         </div>
                         {d.resolutionNotes && <div className="text-xs text-gray-400 pl-0 mt-1">Resolution: {d.resolutionNotes}</div>}
+                        {(d.sectionInchargeName || d.serviceContactMethod) && (
+                          <div className="text-xs text-gray-400 mt-1">
+                            {d.sectionInchargeName && <span>Section incharge informed: {d.sectionInchargeName} ({(d.sectionInchargeInformedAt || "").slice(0, 16).replace("T", " ")})</span>}
+                            {d.sectionInchargeName && d.serviceContactMethod && <span> · </span>}
+                            {d.serviceContactMethod && <span>Service contacted via {d.serviceContactMethod}{d.serviceContactDetail ? ` (${d.serviceContactDetail})` : ""} ({(d.serviceInformedAt || "").slice(0, 16).replace("T", " ")})</span>}
+                          </div>
+                        )}
                         {!d.resolvedAt && canEdit && (
                           <div className="flex items-center gap-2 mt-2">
                             <input className={inputCls} style={{ ...inputStyle, fontSize: 12, padding: "4px 8px" }} placeholder="Resolution notes (optional)"
