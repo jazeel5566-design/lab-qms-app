@@ -1059,6 +1059,8 @@ export default function App() {
   const canManageClauseStatus = TASK_ASSIGNER_ROLES.includes(currentUser.role);
   const canPublishControlledDocs = DOCUMENT_PUBLISHER_ROLES.includes(currentUser.role);
   const canSeeAuditBackup = isAdmin || isQaManager;
+  /** Deleting an EQA/PT result is a data-integrity action, not routine data entry — restricted to Admin and QA Manager specifically, not their deputies (unlike most other manager-tier actions in this app). */
+  const canDeleteEqaResults = isAdmin || isQaManager;
   /** Only Admin and QA Manager can browse the full staff roster — everyone else only ever sees their own record on the Personnel page. */
   const canSeeAllStaff = isAdmin || isQaManager;
   /** Anyone can log an NC (title/description/date occurred only). Filling in the rest — clause, severity, root cause, assignment, close date — and seeing every logged NC is limited to lab/QA managers and their deputies, same role group as task assignment. */
@@ -1176,7 +1178,7 @@ export default function App() {
           equipment={equipment} updateEquipment={updateEquipment} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit}
           ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} activeLaboratoryId={activeLaboratoryId} laboratories={laboratories}
-          eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms} programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} />}
+          eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms} programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} canDeleteEqaResults={canDeleteEqaResults} />}
         {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} currentUser={currentUser} confirmCompetencyAssessmentAction={confirmCompetencyAssessmentAction} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "equipment" && <Equipment equipment={equipment} updateEquipment={updateEquipment}
           equipmentRecords={equipmentRecords} updateEquipmentRecords={updateEquipmentRecords} personnel={personnel} canEdit={canEdit}
@@ -4424,7 +4426,7 @@ function RunForm({ controls, personnel, onSave, onCancel }) {
 }
 
 // ---------------- EQAS (Clause 7.3.7.3 External Quality Assessment) ----------------
-function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction, activeLaboratoryId, laboratories, eqaPrograms, updateEqaPrograms, programAnalytes, updateProgramAnalytes }) {
+function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction, activeLaboratoryId, laboratories, eqaPrograms, updateEqaPrograms, programAnalytes, updateProgramAnalytes, canDeleteEqaResults }) {
   const [showForm, setShowForm] = useState(false);
   const [showManagePrograms, setShowManagePrograms] = useState(false);
   const [filterDiscipline, setFilterDiscipline] = useState("All");
@@ -4436,11 +4438,9 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
   const [showCycleSummary, setShowCycleSummary] = useState(false);
   const [trendParameter, setTrendParameter] = useState("");
   const [expandedCycle, setExpandedCycle] = useState(null);
-  const trendsRef = useRef(null);
   const showTrendFor = (parameter) => {
     setTrendParameter(parameter);
     setShowTrends(true);
-    setTimeout(() => trendsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   };
 
   const addEvents = (drafts) => {
@@ -4516,9 +4516,6 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
           <button onClick={() => setShowCycleSummary(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
             <BarChart3 size={14} /> {showCycleSummary ? "Hide" : "Show"} cycle summary
           </button>
-          <button onClick={() => setShowTrends(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-            <Activity size={14} /> {showTrends ? "Hide" : "Show"} trends
-          </button>
           {canEdit && (
             <button onClick={() => setShowForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
               <Plus size={14} /> Log EQA result
@@ -4580,36 +4577,39 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
       )}
 
       {showTrends && (
-        <div ref={trendsRef} className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-sm font-semibold" style={{ color: COLORS.navy }}>SDI over time by analyte</div>
-            <select className={inputCls} style={{ ...inputStyle, maxWidth: 240 }} value={trendParameter} onChange={e => setTrendParameter(e.target.value)}>
+        <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={() => setShowTrends(false)}>
+          <div className="bg-white rounded-lg border p-5 w-full max-w-xl" style={{ borderColor: "#E1EBE8" }} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-sm font-semibold" style={{ color: COLORS.navy }}>SDI over time by analyte</div>
+              <button onClick={() => setShowTrends(false)} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+            </div>
+            <select className={inputCls} style={{ ...inputStyle, marginBottom: 12 }} value={trendParameter} onChange={e => setTrendParameter(e.target.value)}>
               <option value="">Select an analyte…</option>
               {trendParameters.map(p => <option key={p} value={p}>{p}</option>)}
             </select>
+            {!trendParameter ? (
+              <Empty text="Pick an analyte above to see its SDI trend across all EQA cycles received so far." />
+            ) : trendData.length === 0 ? (
+              <Empty text="No SDI results yet for this analyte." />
+            ) : (
+              <div style={{ width: "100%", height: 220 }}>
+                <ResponsiveContainer>
+                  <LineChart data={trendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#EEF3F1" />
+                    <XAxis dataKey="date" tick={{ fontSize: 11 }} />
+                    <YAxis domain={[-4, 4]} tick={{ fontSize: 11 }} />
+                    <Tooltip />
+                    <ReferenceLine y={0} stroke="#9AA5A3" />
+                    <ReferenceLine y={2} stroke={COLORS.amber} strokeDasharray="3 3" />
+                    <ReferenceLine y={-2} stroke={COLORS.amber} strokeDasharray="3 3" />
+                    <ReferenceLine y={3} stroke={COLORS.red} strokeDasharray="3 3" />
+                    <ReferenceLine y={-3} stroke={COLORS.red} strokeDasharray="3 3" />
+                    <Line type="monotone" dataKey="sdi" stroke={COLORS.teal} strokeWidth={2} dot={{ r: 3 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            )}
           </div>
-          {!trendParameter ? (
-            <Empty text="Pick an analyte above to see its SDI trend across all EQA cycles received so far." />
-          ) : trendData.length === 0 ? (
-            <Empty text="No SDI results yet for this analyte." />
-          ) : (
-            <div style={{ width: "100%", height: 220 }}>
-              <ResponsiveContainer>
-                <LineChart data={trendData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#EEF3F1" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }} />
-                  <YAxis domain={[-4, 4]} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <ReferenceLine y={0} stroke="#9AA5A3" />
-                  <ReferenceLine y={2} stroke={COLORS.amber} strokeDasharray="3 3" />
-                  <ReferenceLine y={-2} stroke={COLORS.amber} strokeDasharray="3 3" />
-                  <ReferenceLine y={3} stroke={COLORS.red} strokeDasharray="3 3" />
-                  <ReferenceLine y={-3} stroke={COLORS.red} strokeDasharray="3 3" />
-                  <Line type="monotone" dataKey="sdi" stroke={COLORS.teal} strokeWidth={2} dot={{ r: 3 }} />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
         </div>
       )}
 
@@ -4679,7 +4679,9 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
                           <button onClick={() => showTrendFor(e.parameter)} className="text-gray-400 hover:text-teal-600" title={`Show SDI trend for ${e.parameter}`} style={{ color: COLORS.teal }}>
                             <Activity size={14} />
                           </button>
-                          <button onClick={() => removeEvent(e.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>
+                          {canDeleteEqaResults && (
+                            <button onClick={() => removeEvent(e.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>
+                          )}
                         </div>
                       </td>
                     </tr>
