@@ -4428,6 +4428,10 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
   const [showForm, setShowForm] = useState(false);
   const [showManagePrograms, setShowManagePrograms] = useState(false);
   const [filterDiscipline, setFilterDiscipline] = useState("All");
+  const [filterProgram, setFilterProgram] = useState("All");
+  const [filterCycle, setFilterCycle] = useState("All");
+  const [filterSample, setFilterSample] = useState("All");
+  const [filterAnalyte, setFilterAnalyte] = useState("All");
   const [showTrends, setShowTrends] = useState(false);
   const [showCycleSummary, setShowCycleSummary] = useState(false);
   const [trendParameter, setTrendParameter] = useState("");
@@ -4446,8 +4450,22 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
   const setEvent = (id, patch) => updateEqaEvents(eqaEvents.map(e => e.id === id ? { ...e, ...patch } : e));
   const removeEvent = (id) => updateEqaEvents(eqaEvents.filter(e => e.id !== id));
 
-  const filtered = eqaEvents.filter(e => filterDiscipline === "All" || e.discipline === filterDiscipline)
+  const disciplineFiltered = eqaEvents.filter(e => filterDiscipline === "All" || e.discipline === filterDiscipline);
+  /** Each filter's own dropdown options are derived from the current discipline's events, and the Program filter matches by provider + program name (resolved via the program catalog), since eqa_events itself only stores a program_id link, not the name directly. */
+  const filtered = disciplineFiltered
+    .filter(e => filterProgram === "All" || `${e.provider || "—"} — ${eqaPrograms.find(p => p.id === e.programId)?.programName || ""}` === filterProgram)
+    .filter(e => filterCycle === "All" || e.cycle === filterCycle)
+    .filter(e => filterSample === "All" || String(e.sampleNumber || "") === filterSample)
+    .filter(e => filterAnalyte === "All" || e.parameter === filterAnalyte)
     .sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || ""));
+
+  const cycleOptions = [...new Set(disciplineFiltered.map(e => e.cycle).filter(Boolean))].sort();
+  const sampleOptions = [...new Set(disciplineFiltered.map(e => e.sampleNumber).filter(v => v !== "" && v !== null && v !== undefined))].sort((a, b) => Number(a) - Number(b));
+  const analyteOptions = [...new Set(disciplineFiltered.map(e => e.parameter).filter(Boolean))].sort();
+  const programNameOptions = [...new Set(disciplineFiltered.map(e => {
+    const prog = eqaPrograms.find(p => p.id === e.programId);
+    return prog ? `${e.provider || "—"} — ${prog.programName}` : null;
+  }).filter(Boolean))].sort();
 
   const evalColor = (ev) => ev === "Satisfactory" ? COLORS.teal : ev === "Marginal" ? COLORS.amber : ev === "Unsatisfactory" ? COLORS.red : "#9AA5A3";
 
@@ -4589,9 +4607,21 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
         </div>
       )}
 
-      <div className="flex gap-2 mb-4">
-        <select value={filterDiscipline} onChange={e => setFilterDiscipline(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+      <div className="flex gap-2 mb-4 flex-wrap">
+        <select value={filterDiscipline} onChange={e => { setFilterDiscipline(e.target.value); setFilterProgram("All"); setFilterCycle("All"); setFilterSample("All"); setFilterAnalyte("All"); }} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
           <option>All</option>{laboratories.map(l => <option key={l.id}>{l.name}</option>)}
+        </select>
+        <select value={filterProgram} onChange={e => setFilterProgram(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+          <option value="All">All programs</option>{programNameOptions.map(p => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <select value={filterCycle} onChange={e => setFilterCycle(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+          <option value="All">All cycles</option>{cycleOptions.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <select value={filterSample} onChange={e => setFilterSample(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+          <option value="All">All samples</option>{sampleOptions.map(s => <option key={s} value={String(s)}>Sample {s}</option>)}
+        </select>
+        <select value={filterAnalyte} onChange={e => setFilterAnalyte(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+          <option value="All">All analytes</option>{analyteOptions.map(a => <option key={a} value={a}>{a}</option>)}
         </select>
       </div>
 
@@ -4603,56 +4633,72 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
           onClose={() => setShowManagePrograms(false)} />
       )}
 
-      <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
-        {filtered.length === 0 && <Empty text="No EQA results logged yet." />}
-        {filtered.map(e => (
-          <div key={e.id} className="px-5 py-3">
-            <div className="flex items-center gap-3 flex-wrap">
-              <Badge color={disciplineColor(e.discipline)}>{e.discipline}</Badge>
-              <span className="text-sm font-medium">{e.parameter}</span>
-              {e.sampleNumber !== "" && e.sampleNumber !== undefined && e.sampleNumber !== null && (
-                <span className="text-xs px-1.5 py-0.5 rounded" style={{ background: COLORS.mint, color: COLORS.teal }}>Sample {e.sampleNumber}</span>
-              )}
-              <span className="text-xs text-gray-400">{e.provider}{e.cycle ? ` · ${e.cycle}` : ""}</span>
-              <span className="text-xs text-gray-400 ml-auto">{e.dateReceived}</span>
-              <select value={e.evaluation} onChange={ev => setEvent(e.id, { evaluation: ev.target.value })} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1", color: evalColor(e.evaluation) }}>
-                {EQA_EVALUATION.map(opt => <option key={opt}>{opt}</option>)}
-              </select>
-              <button onClick={() => removeEvent(e.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>
-            </div>
-            <div className="text-xs text-gray-500 mt-1">
-              Lab result: {e.labResult} {e.peerMean !== "" && e.peerMean !== undefined ? `· Peer mean ${e.peerMean} · Peer SD ${e.peerSD}` : ""}
-              {e.sdi !== null && e.sdi !== undefined ? ` · SDI ${Number(e.sdi).toFixed(2)}` : ""}
-            </div>
-            {(e.runDate || e.dueDate) && (
-              <div className="text-xs text-gray-400 mt-0.5">
-                {e.runDate ? `Run date: ${e.runDate}` : ""}{e.runDate && e.dueDate ? " · " : ""}
-                {e.dueDate ? (
-                  <span style={e.dueDate < todayISO() && e.evaluation === "Not yet received" ? { color: COLORS.red, fontWeight: 500 } : {}}>
-                    {e.dueDate < todayISO() && e.evaluation === "Not yet received" ? "Submission overdue: " : "Submission due: "}{e.dueDate}
-                  </span>
-                ) : ""}
-              </div>
-            )}
-            {e.evaluation === "Unsatisfactory" && (
-              e.linkedNcId ? (
-                <div className="mt-1"><Badge color={COLORS.teal}>{ncs.find(n => n.id === e.linkedNcId)?.ncNumber || "NC"} raised from this result</Badge></div>
-              ) : canEdit && (
-                <button onClick={() => createNcFromEqaAction(e)} className="mt-1 text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.red, color: COLORS.red }}>
-                  Create NC from this result
-                </button>
-              )
-            )}
-            {e.notes && <div className="text-xs text-gray-400 mt-1">{e.notes}</div>}
-            {e.nextCycleDate && (
-              <div className="mt-1">
-                <Badge color={e.nextCycleDate < todayISO() ? COLORS.red : "#9AA5A3"}>
-                  {e.nextCycleDate < todayISO() ? "Next cycle overdue" : "Next cycle due"} {e.nextCycleDate}
-                </Badge>
-              </div>
-            )}
-          </div>
-        ))}
+      <div className="bg-white rounded-lg border overflow-x-auto" style={{ borderColor: "#E1EBE8" }}>
+        {filtered.length === 0 ? <Empty text="No EQA results logged yet." /> : (
+          <table className="w-full text-xs" style={{ minWidth: 980 }}>
+            <thead>
+              <tr className="border-b" style={{ borderColor: "#E1EBE8" }}>
+                {["Analyte", "Cycle / Sample", "Result", "Unit", "Peer mean", "SDI", "Run date", "Submission date", "Due date", "Evaluation", ""].map(h => (
+                  <th key={h} className="text-left font-medium text-gray-400 px-3 py-2 whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(e => {
+                const overdue = e.dueDate && e.dueDate < todayISO() && e.evaluation === "Not yet received";
+                return (
+                  <React.Fragment key={e.id}>
+                    <tr className="border-b" style={{ borderColor: "#EEF3F1" }}>
+                      <td className="px-3 py-2 align-top">
+                        <div className="font-medium" style={{ color: COLORS.ink }}>{e.parameter}</div>
+                        <div className="flex items-center gap-1 mt-0.5"><Badge color={disciplineColor(e.discipline)}>{e.discipline}</Badge><span className="text-gray-400">{e.provider}</span></div>
+                      </td>
+                      <td className="px-3 py-2 align-top whitespace-nowrap">
+                        {e.cycle || "—"}{e.sampleNumber !== "" && e.sampleNumber !== undefined && e.sampleNumber !== null ? <div className="text-gray-400">Sample {e.sampleNumber}</div> : null}
+                      </td>
+                      <td className="px-3 py-2 align-top">{e.labResult ?? "—"}</td>
+                      <td className="px-3 py-2 align-top text-gray-500">{e.unit || "—"}</td>
+                      <td className="px-3 py-2 align-top text-gray-500">{e.peerMean !== "" && e.peerMean !== undefined && e.peerMean !== null ? `${e.peerMean}${e.peerSD !== "" && e.peerSD !== undefined ? ` (SD ${e.peerSD})` : ""}` : "—"}</td>
+                      <td className="px-3 py-2 align-top">{e.sdi !== null && e.sdi !== undefined ? Number(e.sdi).toFixed(2) : "—"}</td>
+                      <td className="px-3 py-2 align-top whitespace-nowrap text-gray-500">{e.runDate || "—"}</td>
+                      <td className="px-3 py-2 align-top whitespace-nowrap text-gray-500">{e.dateReceived || "—"}</td>
+                      <td className="px-3 py-2 align-top whitespace-nowrap" style={overdue ? { color: COLORS.red, fontWeight: 500 } : { color: "#9AA5A3" }}>{e.dueDate || "—"}{overdue ? " (overdue)" : ""}</td>
+                      <td className="px-3 py-2 align-top">
+                        <select value={e.evaluation} onChange={ev => setEvent(e.id, { evaluation: ev.target.value })} className="text-xs border rounded-md px-1.5 py-1" style={{ borderColor: "#D8E5E1", color: evalColor(e.evaluation) }}>
+                          {EQA_EVALUATION.map(opt => <option key={opt}>{opt}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-3 py-2 align-top"><button onClick={() => removeEvent(e.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button></td>
+                    </tr>
+                    {(e.evaluation === "Unsatisfactory" || e.notes || e.nextCycleDate) && (
+                      <tr className="border-b" style={{ borderColor: "#EEF3F1" }}>
+                        <td colSpan={11} className="px-3 pb-2 -mt-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {e.evaluation === "Unsatisfactory" && (
+                              e.linkedNcId ? (
+                                <Badge color={COLORS.teal}>{ncs.find(n => n.id === e.linkedNcId)?.ncNumber || "NC"} raised from this result</Badge>
+                              ) : canEdit && (
+                                <button onClick={() => createNcFromEqaAction(e)} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.red, color: COLORS.red }}>
+                                  Create NC from this result
+                                </button>
+                              )
+                            )}
+                            {e.nextCycleDate && (
+                              <Badge color={e.nextCycleDate < todayISO() ? COLORS.red : "#9AA5A3"}>
+                                {e.nextCycleDate < todayISO() ? "Next cycle overdue" : "Next cycle due"} {e.nextCycleDate}
+                              </Badge>
+                            )}
+                            {e.notes && <span className="text-gray-400">{e.notes}</span>}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );
@@ -4677,6 +4723,7 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
   const [parameter, setParameter] = useState("");
   const [customParameter, setCustomParameter] = useState(false);
   const [sampleNumber, setSampleNumber] = useState("");
+  const [unit, setUnit] = useState("");
   const [runDate, setRunDate] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [dateReceived, setDateReceived] = useState(todayISO());
@@ -4689,14 +4736,15 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
   // since a monthly-annual cycle's 12 samples each have their own dates
   // spread across the year — "Fill 12 samples" below is a shortcut for
   // exactly that common case (one analyte reported across a full cycle).
-  const blankRow = () => ({ parameter: "", sampleNumber: "", runDate: "", dueDate: "", dateReceived: "", labResult: "", peerMean: "", peerSD: "" });
+  const blankRow = () => ({ parameter: "", sampleNumber: "", unit: "", runDate: "", dueDate: "", dateReceived: "", labResult: "", peerMean: "", peerSD: "" });
   const [rows, setRows] = useState([blankRow()]);
   const updateRow = (i, patch) => setRows(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   const addRow = () => setRows(prev => [...prev, blankRow()]);
   const removeRow = (i) => setRows(prev => prev.filter((_, idx) => idx !== i));
   const fill12Samples = () => {
     const sharedParameter = rows[0]?.parameter || "";
-    setRows(Array.from({ length: 12 }, (_, i) => ({ ...blankRow(), parameter: sharedParameter, sampleNumber: String(i + 1) })));
+    const sharedUnit = rows[0]?.unit || "";
+    setRows(Array.from({ length: 12 }, (_, i) => ({ ...blankRow(), parameter: sharedParameter, unit: sharedUnit, sampleNumber: String(i + 1) })));
   };
 
   const machinesForDiscipline = qcMachines.filter(m => m.discipline === discipline);
@@ -4705,7 +4753,7 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
   const handleSave = () => {
     if (mode === "single") {
       if (!parameter.trim() || labResult === "") return;
-      onSave([{ ...sharedFields, parameter, sampleNumber, runDate, dueDate, dateReceived, labResult, peerMean, peerSD }]);
+      onSave([{ ...sharedFields, parameter, sampleNumber, unit, runDate, dueDate, dateReceived, labResult, peerMean, peerSD }]);
     } else {
       const validRows = rows.filter(r => r.parameter.trim() && r.labResult !== "");
       if (validRows.length === 0) return;
@@ -4763,6 +4811,7 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
             )}
           </Field>
           <Field label="Sample # (optional)"><input type="number" min="1" className={inputCls} style={inputStyle} value={sampleNumber} onChange={e => setSampleNumber(e.target.value)} placeholder="e.g. 1–12" /></Field>
+          <Field label="Unit"><input className={inputCls} style={inputStyle} value={unit} onChange={e => setUnit(e.target.value)} placeholder="e.g. mg/dL, ng/mL, IU/L" /></Field>
           <Field label="Sample run date"><input type="date" className={inputCls} style={inputStyle} value={runDate} onChange={e => setRunDate(e.target.value)} /></Field>
           <Field label="Submission due date"><input type="date" className={inputCls} style={inputStyle} value={dueDate} onChange={e => setDueDate(e.target.value)} /></Field>
           <Field label="Date result received"><input type="date" className={inputCls} style={inputStyle} value={dateReceived} onChange={e => setDateReceived(e.target.value)} /></Field>
@@ -4790,6 +4839,7 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
                   <input className={inputCls} style={{ ...inputStyle, flex: 1 }} value={r.parameter} onChange={e => updateRow(i, { parameter: e.target.value })} placeholder="Analyte" />
                 )}
                 <input type="number" min="1" className={inputCls} style={{ ...inputStyle, width: 90 }} value={r.sampleNumber} onChange={e => updateRow(i, { sampleNumber: e.target.value })} placeholder="Sample #" />
+                <input className={inputCls} style={{ ...inputStyle, width: 110 }} value={r.unit} onChange={e => updateRow(i, { unit: e.target.value })} placeholder="Unit" />
                 <button onClick={() => removeRow(i)} disabled={rows.length === 1} className="text-gray-300 hover:text-red-500 disabled:opacity-30 shrink-0"><Trash2 size={14} /></button>
               </div>
               <div className="grid grid-cols-6 gap-2">
