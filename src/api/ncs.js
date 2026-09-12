@@ -25,7 +25,16 @@ export async function deleteNonconformity(id) {
   if (error) throw new Error(error.message);
 }
 
-/** Simple sequential NC number, e.g. NC-004. Computed client-side from the current list. */
-export function nextNcNumber(existingList) {
-  return `NC-${String(existingList.length + 1).padStart(3, "0")}`;
+/**
+ * Sequential NC number, e.g. NC-004 — generated server-side via the
+ * generate_nc_number() function (0037 migration), SECURITY DEFINER so it
+ * always counts every NC in the lab, not just the ones the calling user
+ * can currently see. Client-side counting broke once regular staff were
+ * restricted to seeing only their own NCs (their local count is no
+ * longer the true total, and would start colliding on the same number).
+ */
+export async function generateNcNumber(laboratoryId) {
+  const { data, error } = await supabase.rpc("generate_nc_number", { p_laboratory_id: laboratoryId });
+  if (error) throw new Error(error.message);
+  return data;
 }
