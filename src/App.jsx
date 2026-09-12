@@ -735,15 +735,19 @@ export default function App() {
     if (!nc.assignedTo) { alert("Assign this NC to someone first."); return; }
     if (!nc.dueDate) { alert("Set a target close date first."); return; }
     const priority = nc.severity === "Critical" || nc.severity === "Major" ? "High" : "Medium";
-    const marker = uid();
+    const title = `Resolve ${nc.ncNumber}: ${nc.title}`;
     const newTask = {
-      id: uid(), title: `Resolve ${nc.ncNumber}: ${nc.title}`, assignedTo: nc.assignedTo, dueDate: nc.dueDate,
-      dueTime: nc.dueTime || "", priority, clauseId: nc.clauseId || "", status: "Open", notes: `Created from ${nc.ncNumber}. ${marker}`,
+      id: uid(), title, assignedTo: nc.assignedTo, dueDate: nc.dueDate,
+      dueTime: nc.dueTime || "", priority, clauseId: nc.clauseId || "", status: "Open",
       createdAt: todayISO(), laboratoryId: activeLaboratoryId,
     };
     const syncedTasks = await updateTasks([newTask, ...tasks]);
     if (!syncedTasks) return; // Task creation itself failed — already alerted by updateTasks.
-    const createdTask = syncedTasks.find(t => (t.notes || "").includes(marker));
+    // Matched by title, not a "notes" field — the tasks table has no notes
+    // column at all, so anything stashed there is silently dropped on save
+    // and can never be found again. Title already embeds the NC number
+    // (unique per lab as of 0038), which is unique enough for this lookup.
+    const createdTask = syncedTasks.find(t => t.title === title && t.assignedTo === nc.assignedTo && t.dueDate === nc.dueDate);
     if (!createdTask) { alert("The task was created but couldn't be re-found to link it back to this NC — check the Tasks tab."); return; }
     await updateNcs(ncs.map(n => n.id === nc.id ? { ...n, linkedTaskId: createdTask.id } : n));
     if (notificationSettings.task_assigned !== false) {
