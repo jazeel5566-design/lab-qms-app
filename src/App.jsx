@@ -20,6 +20,7 @@ import * as ncApi from "./api/ncs.js";
 import * as opsApi from "./api/operations.js";
 import * as qcApi from "./api/qc.js";
 import * as eqaDocApi from "./api/eqaAndDocuments.js";
+import * as eqaProgramsApi from "./api/eqaPrograms.js";
 import * as riskApi from "./api/risks.js";
 import * as mgmtReviewApi from "./api/managementReviews.js";
 import * as storageApi from "./api/storage.js";
@@ -41,7 +42,7 @@ import {
   equipmentRecordFromDb, equipmentRecordToDb,
   machineFromDb, machineToDb, parameterFromDb, parameterToDb,
   controlFromDb, controlToDb, runFromDb, runToDb,
-  eqaFromDb, eqaToDb, documentFromDb, documentToDb,
+  eqaFromDb, eqaToDb, eqaProgramFromDb, eqaProgramToDb, programAnalyteFromDb, programAnalyteToDb, documentFromDb, documentToDb,
   riskFromDb, riskToDb, managementReviewFromDb, managementReviewToDb,
   acknowledgmentFromDb, downtimeFromDb, clauseEvidenceFromDb, taskCommentFromDb, taskTemplateFromDb,
   laboratoryFromDb, personnelLabFromDb,
@@ -343,6 +344,8 @@ export default function App() {
   const [qcControls, setQcControls] = useState([]);
   const [qcRuns, setQcRuns] = useState([]);
   const [eqaEvents, setEqaEvents] = useState([]);
+  const [eqaPrograms, setEqaPrograms] = useState([]);
+  const [programAnalytes, setProgramAnalytes] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [risks, setRisks] = useState([]);
   const [managementReviews, setManagementReviews] = useState([]);
@@ -387,7 +390,7 @@ export default function App() {
    * or later, once they've picked one from the login-time selector.
    */
   const loadLabScopedData = async (labId, p) => {
-    const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows] = await Promise.all([
+    const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, progRows, analyteRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows] = await Promise.all([
       clauseApi.listClauseStatus(labId),
       taskApi.listTasks(labId),
       ncApi.listNonconformities(labId),
@@ -399,6 +402,8 @@ export default function App() {
       qcApi.listControls(undefined, labId),
       qcApi.listRuns(undefined, labId),
       eqaDocApi.listEqaEvents(labId),
+      eqaProgramsApi.listEqaPrograms(labId),
+      eqaProgramsApi.listProgramAnalytes(labId),
       eqaDocApi.listDocuments(labId),
       riskApi.listRisks(labId),
       mgmtReviewApi.listManagementReviews(labId),
@@ -425,6 +430,8 @@ export default function App() {
     setQcControls(qcRows.map(controlFromDb));
     setQcRuns(qrRows.map(r => runFromDb(r, p)));
     setEqaEvents(eqaRows.map(eqaFromDb));
+    setEqaPrograms(progRows.map(eqaProgramFromDb));
+    setProgramAnalytes(analyteRows.map(programAnalyteFromDb));
     setDocuments(docRows.map(r => documentFromDb(r, p)));
     setRisks(riskRows.map(r => riskFromDb(r, p)));
     setManagementReviews(mrRows.map(r => managementReviewFromDb(r, p)));
@@ -658,6 +665,18 @@ export default function App() {
     create: (row) => eqaDocApi.createEqaEvent(row),
     update: (id, row) => eqaDocApi.updateEqaEvent(id, row),
     remove: (id) => eqaDocApi.deleteEqaEvent(id),
+  });
+
+  const updateEqaPrograms = makeListUpdater(setEqaPrograms, () => eqaPrograms, eqaProgramToDb, eqaProgramFromDb, {
+    create: (row) => eqaProgramsApi.createEqaProgram(row),
+    update: (id, row) => eqaProgramsApi.updateEqaProgram(id, row),
+    remove: (id) => eqaProgramsApi.deleteEqaProgram(id),
+  });
+
+  const updateProgramAnalytes = makeListUpdater(setProgramAnalytes, () => programAnalytes, programAnalyteToDb, programAnalyteFromDb, {
+    create: (row) => eqaProgramsApi.addProgramAnalyte(row),
+    update: () => { throw new Error("Analytes aren't edited in place — remove and re-add instead."); },
+    remove: (id) => eqaProgramsApi.deleteProgramAnalyte(id),
   });
 
   /** One click to raise an NC directly from an Unsatisfactory EQA result, pre-filled — and records the link back on the EQA row so it's never accidentally raised twice. */
@@ -1104,7 +1123,8 @@ export default function App() {
           authorizeQcRunAction={authorizeQcRunAction} bulkImportQcRuns={bulkImportQcRuns}
           equipment={equipment} updateEquipment={updateEquipment} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit}
-          ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} activeLaboratoryId={activeLaboratoryId} laboratories={laboratories} />}
+          ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} activeLaboratoryId={activeLaboratoryId} laboratories={laboratories}
+          eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms} programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} />}
         {tab === "competency" && <Competency competency={competency} updateCompetency={updateCompetency} personnel={personnel} canEdit={canEdit} currentUser={currentUser} confirmCompetencyAssessmentAction={confirmCompetencyAssessmentAction} activeLaboratoryId={activeLaboratoryId} />}
         {tab === "equipment" && <Equipment equipment={equipment} updateEquipment={updateEquipment}
           equipmentRecords={equipmentRecords} updateEquipmentRecords={updateEquipmentRecords} personnel={personnel} canEdit={canEdit}
@@ -4223,8 +4243,9 @@ function RunForm({ controls, personnel, onSave, onCancel }) {
 }
 
 // ---------------- EQAS (Clause 7.3.7.3 External Quality Assessment) ----------------
-function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction, activeLaboratoryId, laboratories }) {
+function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction, activeLaboratoryId, laboratories, eqaPrograms, updateEqaPrograms, programAnalytes, updateProgramAnalytes }) {
   const [showForm, setShowForm] = useState(false);
+  const [showManagePrograms, setShowManagePrograms] = useState(false);
   const [filterDiscipline, setFilterDiscipline] = useState("All");
   const [showTrends, setShowTrends] = useState(false);
   const [showCycleSummary, setShowCycleSummary] = useState(false);
@@ -4282,6 +4303,11 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>External Quality Assessment (EQAS)</h1>
         <div className="flex gap-2">
+          {canEdit && (
+            <button onClick={() => setShowManagePrograms(true)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+              <ListChecks size={14} /> Manage programs
+            </button>
+          )}
           <button onClick={() => setShowCycleSummary(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
             <BarChart3 size={14} /> {showCycleSummary ? "Hide" : "Show"} cycle summary
           </button>
@@ -4388,7 +4414,13 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
         </select>
       </div>
 
-      {showForm && canEdit && <EQAForm qcMachines={qcMachines} onCancel={() => setShowForm(false)} onSave={addEvents} laboratories={laboratories} />}
+      {showForm && canEdit && <EQAForm qcMachines={qcMachines} onCancel={() => setShowForm(false)} onSave={addEvents} laboratories={laboratories} eqaPrograms={eqaPrograms} programAnalytes={programAnalytes} />}
+
+      {showManagePrograms && (
+        <ManageEqaPrograms laboratories={laboratories} eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms}
+          programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} activeLaboratoryId={activeLaboratoryId}
+          onClose={() => setShowManagePrograms(false)} />
+      )}
 
       <div className="bg-white rounded-lg border divide-y" style={{ borderColor: "#E1EBE8" }}>
         {filtered.length === 0 && <Empty text="No EQA results logged yet." />}
@@ -4445,17 +4477,24 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
   );
 }
 
-function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
+function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, programAnalytes }) {
   const [mode, setMode] = useState("single"); // "single" | "batch"
   const [discipline, setDiscipline] = useState(laboratories[0]?.name || "");
   const [machineId, setMachineId] = useState("");
-  const [provider, setProvider] = useState("");
-  const [cycle, setCycle] = useState("");
+  const [programId, setProgramId] = useState("");
   const [nextCycleDate, setNextCycleDate] = useState("");
   const [notes, setNotes] = useState("");
 
+  const activeLabId = laboratories.find(l => l.name === discipline)?.id;
+  const programsForLab = eqaPrograms.filter(p => p.laboratoryId === activeLabId);
+  const selectedProgram = eqaPrograms.find(p => p.id === programId);
+  const analytesForProgram = programAnalytes.filter(a => a.programId === programId).sort((a, b) => a.sortOrder - b.sortOrder);
+  const provider = selectedProgram?.provider || "";
+  const cycle = selectedProgram?.cycle || "";
+
   // Single-entry fields
   const [parameter, setParameter] = useState("");
+  const [customParameter, setCustomParameter] = useState(false);
   const [sampleNumber, setSampleNumber] = useState("");
   const [runDate, setRunDate] = useState("");
   const [dueDate, setDueDate] = useState("");
@@ -4464,7 +4503,7 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
   const [peerMean, setPeerMean] = useState("");
   const [peerSD, setPeerSD] = useState("");
 
-  // Batch-entry rows — same shared header above (discipline/provider/cycle).
+  // Batch-entry rows — same shared header above (discipline/program).
   // run date, due date, and date received are PER ROW rather than shared,
   // since a monthly-annual cycle's 12 samples each have their own dates
   // spread across the year — "Fill 12 samples" below is a shortcut for
@@ -4480,7 +4519,7 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
   };
 
   const machinesForDiscipline = qcMachines.filter(m => m.discipline === discipline);
-  const sharedFields = { discipline, machineId, provider, cycle, nextCycleDate, notes };
+  const sharedFields = { discipline, machineId, provider, cycle, programId: programId || null, nextCycleDate, notes };
 
   const handleSave = () => {
     if (mode === "single") {
@@ -4501,7 +4540,7 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
       </div>
       <div className="grid grid-cols-3 gap-3">
         <Field label="Discipline">
-          <select className={inputCls} style={inputStyle} value={discipline} onChange={e => { setDiscipline(e.target.value); setMachineId(""); }}>
+          <select className={inputCls} style={inputStyle} value={discipline} onChange={e => { setDiscipline(e.target.value); setMachineId(""); setProgramId(""); setParameter(""); }}>
             {laboratories.map(l => <option key={l.id}>{l.name}</option>)}
           </select>
         </Field>
@@ -4510,14 +4549,38 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
             <option value="">Not machine-specific</option>{machinesForDiscipline.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
           </select>
         </Field>
-        <Field label="Provider / scheme"><input className={inputCls} style={inputStyle} value={provider} onChange={e => setProvider(e.target.value)} placeholder="e.g. RIQAS, UK NEQAS, CAP" /></Field>
-        <Field label="Cycle / round"><input className={inputCls} style={inputStyle} value={cycle} onChange={e => setCycle(e.target.value)} placeholder="e.g. 2026 Annual Cycle" /></Field>
+        <Field label="EQA program">
+          <select className={inputCls} style={inputStyle} value={programId} onChange={e => { setProgramId(e.target.value); setParameter(""); setCustomParameter(false); }}>
+            <option value="">Not in the catalog / one-off entry</option>
+            {programsForLab.map(p => <option key={p.id} value={p.id}>{p.provider} — {p.programName} (Cycle {p.cycle})</option>)}
+          </select>
+        </Field>
+        {selectedProgram && (
+          <div className="text-xs text-gray-400 col-span-3 -mt-2">
+            Provider: <strong>{selectedProgram.provider}</strong> · Cycle: <strong>{selectedProgram.cycle}</strong>
+            {selectedProgram.startDate && <> · Cycle window: {selectedProgram.startDate} to {selectedProgram.endDate || "?"}</>}
+            {" — "}auto-filled, set below only if this differs
+          </div>
+        )}
         <Field label="Next cycle due (optional)"><input type="date" className={inputCls} style={inputStyle} value={nextCycleDate} onChange={e => setNextCycleDate(e.target.value)} /></Field>
       </div>
 
       {mode === "single" ? (
         <div className="grid grid-cols-3 gap-3">
-          <Field label="Parameter"><input className={inputCls} style={inputStyle} value={parameter} onChange={e => setParameter(e.target.value)} placeholder="e.g. Hemoglobin, Glucose, TSH" /></Field>
+          <Field label="Analyte">
+            {analytesForProgram.length > 0 && !customParameter ? (
+              <select className={inputCls} style={inputStyle} value={parameter} onChange={e => { if (e.target.value === "__custom__") { setCustomParameter(true); setParameter(""); } else setParameter(e.target.value); }}>
+                <option value="">Select an analyte…</option>
+                {analytesForProgram.map(a => <option key={a.id} value={a.analyte}>{a.analyte}</option>)}
+                <option value="__custom__">+ Analyte not listed…</option>
+              </select>
+            ) : (
+              <div className="flex gap-1">
+                <input className={inputCls} style={inputStyle} value={parameter} onChange={e => setParameter(e.target.value)} placeholder="e.g. Hemoglobin, Glucose, TSH" />
+                {analytesForProgram.length > 0 && <button onClick={() => { setCustomParameter(false); setParameter(""); }} className="text-xs px-2 text-gray-400 shrink-0" title="Back to list">✕</button>}
+              </div>
+            )}
+          </Field>
           <Field label="Sample # (optional)"><input type="number" min="1" className={inputCls} style={inputStyle} value={sampleNumber} onChange={e => setSampleNumber(e.target.value)} placeholder="e.g. 1–12" /></Field>
           <Field label="Sample run date"><input type="date" className={inputCls} style={inputStyle} value={runDate} onChange={e => setRunDate(e.target.value)} /></Field>
           <Field label="Submission due date"><input type="date" className={inputCls} style={inputStyle} value={dueDate} onChange={e => setDueDate(e.target.value)} /></Field>
@@ -4537,7 +4600,14 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
           {rows.map((r, i) => (
             <div key={i} className="border rounded-md p-2 mb-1.5" style={{ borderColor: "#E1EBE8" }}>
               <div className="flex items-center gap-2 mb-1.5">
-                <input className={inputCls} style={{ ...inputStyle, flex: 1 }} value={r.parameter} onChange={e => updateRow(i, { parameter: e.target.value })} placeholder="Analyte" />
+                {analytesForProgram.length > 0 ? (
+                  <select className={inputCls} style={{ ...inputStyle, flex: 1 }} value={r.parameter} onChange={e => updateRow(i, { parameter: e.target.value })}>
+                    <option value="">Select an analyte…</option>
+                    {analytesForProgram.map(a => <option key={a.id} value={a.analyte}>{a.analyte}</option>)}
+                  </select>
+                ) : (
+                  <input className={inputCls} style={{ ...inputStyle, flex: 1 }} value={r.parameter} onChange={e => updateRow(i, { parameter: e.target.value })} placeholder="Analyte" />
+                )}
                 <input type="number" min="1" className={inputCls} style={{ ...inputStyle, width: 90 }} value={r.sampleNumber} onChange={e => updateRow(i, { sampleNumber: e.target.value })} placeholder="Sample #" />
                 <button onClick={() => removeRow(i)} disabled={rows.length === 1} className="text-gray-300 hover:text-red-500 disabled:opacity-30 shrink-0"><Trash2 size={14} /></button>
               </div>
@@ -4560,6 +4630,92 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories }) {
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
         <button onClick={handleSave}
           className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Save {mode === "batch" ? `${rows.filter(r => r.parameter.trim() && r.labResult !== "").length} result(s)` : "EQA result"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------- Manage the EQA program catalog (add/remove programs and their analytes) ----------------
+function ManageEqaPrograms({ laboratories, eqaPrograms, updateEqaPrograms, programAnalytes, updateProgramAnalytes, activeLaboratoryId, onClose }) {
+  const [newProvider, setNewProvider] = useState("");
+  const [newProgramName, setNewProgramName] = useState("");
+  const [newCycle, setNewCycle] = useState("");
+  const [newStart, setNewStart] = useState("");
+  const [newEnd, setNewEnd] = useState("");
+  const [newAnalyteFor, setNewAnalyteFor] = useState(null);
+  const [newAnalyteText, setNewAnalyteText] = useState("");
+
+  const programsHere = eqaPrograms.filter(p => p.laboratoryId === activeLaboratoryId);
+
+  const addProgram = () => {
+    if (!newProvider.trim() || !newProgramName.trim() || !newCycle.trim()) return;
+    updateEqaPrograms([{ id: uid(), laboratoryId: activeLaboratoryId, provider: newProvider, programName: newProgramName, cycle: newCycle, startDate: newStart, endDate: newEnd }, ...eqaPrograms]);
+    setNewProvider(""); setNewProgramName(""); setNewCycle(""); setNewStart(""); setNewEnd("");
+  };
+  const removeProgram = (id) => updateEqaPrograms(eqaPrograms.filter(p => p.id !== id));
+
+  const addAnalyte = (programId) => {
+    if (!newAnalyteText.trim()) return;
+    const existingCount = programAnalytes.filter(a => a.programId === programId).length;
+    updateProgramAnalytes([{ id: uid(), programId, analyte: newAnalyteText, sortOrder: existingCount + 1 }, ...programAnalytes]);
+    setNewAnalyteText(""); setNewAnalyteFor(null);
+  };
+  const removeAnalyte = (id) => updateProgramAnalytes(programAnalytes.filter(a => a.id !== id));
+
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg border max-w-2xl w-full max-h-[85vh] overflow-y-auto p-5" style={{ borderColor: "#E1EBE8" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-semibold" style={{ color: COLORS.navy }}>Manage EQA programs — {laboratories.find(l => l.id === activeLaboratoryId)?.name}</div>
+          <button onClick={onClose} className="text-gray-400"><X size={16} /></button>
+        </div>
+
+        <div className="border rounded-md p-3 mb-4" style={{ borderColor: "#E1EBE8" }}>
+          <div className="text-xs font-medium text-gray-500 mb-2">Add a new program</div>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <input className={inputCls} style={inputStyle} value={newProvider} onChange={e => setNewProvider(e.target.value)} placeholder="Provider (e.g. Biorad)" />
+            <input className={inputCls} style={inputStyle} value={newProgramName} onChange={e => setNewProgramName(e.target.value)} placeholder="Program name" />
+            <input className={inputCls} style={inputStyle} value={newCycle} onChange={e => setNewCycle(e.target.value)} placeholder="Cycle (e.g. 25)" />
+            <div />
+            <div><div className="text-[10px] text-gray-400 mb-0.5">Start date</div><input type="date" className={inputCls} style={inputStyle} value={newStart} onChange={e => setNewStart(e.target.value)} /></div>
+            <div><div className="text-[10px] text-gray-400 mb-0.5">End date</div><input type="date" className={inputCls} style={inputStyle} value={newEnd} onChange={e => setNewEnd(e.target.value)} /></div>
+          </div>
+          <button onClick={addProgram} className="text-xs px-3 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Plus size={12} /> Add program</button>
+        </div>
+
+        <div className="text-xs font-medium text-gray-500 mb-2">Existing programs</div>
+        <div className="divide-y" style={{ borderColor: "#E1EBE8" }}>
+          {programsHere.length === 0 && <Empty text="No programs catalogued for this lab yet." />}
+          {programsHere.map(p => {
+            const analytes = programAnalytes.filter(a => a.programId === p.id).sort((a, b) => a.sortOrder - b.sortOrder);
+            return (
+              <div key={p.id} className="py-3">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium">{p.provider} — {p.programName} (Cycle {p.cycle})</span>
+                  <span className="text-xs text-gray-400 ml-auto">{p.startDate}{p.startDate && p.endDate ? " – " : ""}{p.endDate}</span>
+                  <button onClick={() => removeProgram(p.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>
+                </div>
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {analytes.map(a => (
+                    <span key={a.id} className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: COLORS.mint, color: COLORS.teal }}>
+                      {a.analyte}
+                      <button onClick={() => removeAnalyte(a.id)} className="hover:text-red-500">×</button>
+                    </span>
+                  ))}
+                  {newAnalyteFor === p.id ? (
+                    <div className="flex items-center gap-1">
+                      <input autoFocus className="text-xs border rounded-md px-2 py-0.5 w-32" style={{ borderColor: "#D8E5E1" }} value={newAnalyteText}
+                        onChange={e => setNewAnalyteText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addAnalyte(p.id); if (e.key === "Escape") setNewAnalyteFor(null); }} placeholder="Analyte name" />
+                      <button onClick={() => addAnalyte(p.id)} className="text-xs" style={{ color: COLORS.teal }}>Add</button>
+                    </div>
+                  ) : (
+                    <button onClick={() => { setNewAnalyteFor(p.id); setNewAnalyteText(""); }} className="text-xs px-2 py-0.5 rounded-full border" style={{ borderColor: "#D8E5E1", color: "#9AA5A3" }}>+ analyte</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

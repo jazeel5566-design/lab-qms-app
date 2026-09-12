@@ -445,6 +445,7 @@ export const eqaFromDb = (row) => ({
   linkedNcId: row.linked_nc_id || "",
   nextCycleDate: row.next_cycle_date || "",
   laboratoryId: row.laboratory_id,
+  programId: row.program_id || "",
 });
 export const eqaToDb = (e) => ({
   discipline: e.discipline,
@@ -463,7 +464,39 @@ export const eqaToDb = (e) => ({
   notes: e.notes || null,
   linked_nc_id: e.linkedNcId || null,
   next_cycle_date: e.nextCycleDate || null,
+  program_id: e.programId || null,
   laboratory_id: e.laboratoryId,
+});
+
+// ---------------- eqa_programs / eqa_program_analytes (0034) ----------------
+export const eqaProgramFromDb = (row) => ({
+  id: row.id,
+  laboratoryId: row.laboratory_id,
+  provider: row.provider,
+  programName: row.program_name,
+  cycle: row.cycle,
+  startDate: row.start_date || "",
+  endDate: row.end_date || "",
+});
+export const eqaProgramToDb = (p) => ({
+  laboratory_id: p.laboratoryId,
+  provider: p.provider,
+  program_name: p.programName,
+  cycle: p.cycle,
+  start_date: p.startDate || null,
+  end_date: p.endDate || null,
+});
+
+export const programAnalyteFromDb = (row) => ({
+  id: row.id,
+  programId: row.program_id,
+  analyte: row.analyte,
+  sortOrder: row.sort_order || 0,
+});
+export const programAnalyteToDb = (a) => ({
+  program_id: a.programId,
+  analyte: a.analyte,
+  sort_order: a.sortOrder || 0,
 });
 
 // ---------------- documents ----------------
