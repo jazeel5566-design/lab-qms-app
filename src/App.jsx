@@ -4436,6 +4436,12 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
   const [showCycleSummary, setShowCycleSummary] = useState(false);
   const [trendParameter, setTrendParameter] = useState("");
   const [expandedCycle, setExpandedCycle] = useState(null);
+  const trendsRef = useRef(null);
+  const showTrendFor = (parameter) => {
+    setTrendParameter(parameter);
+    setShowTrends(true);
+    setTimeout(() => trendsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
 
   const addEvents = (drafts) => {
     const newEvents = drafts.map(draft => {
@@ -4574,7 +4580,7 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
       )}
 
       {showTrends && (
-        <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
+        <div ref={trendsRef} className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
           <div className="flex items-center justify-between mb-3">
             <div className="text-sm font-semibold" style={{ color: COLORS.navy }}>SDI over time by analyte</div>
             <select className={inputCls} style={{ ...inputStyle, maxWidth: 240 }} value={trendParameter} onChange={e => setTrendParameter(e.target.value)}>
@@ -4668,7 +4674,14 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
                           {EQA_EVALUATION.map(opt => <option key={opt}>{opt}</option>)}
                         </select>
                       </td>
-                      <td className="px-3 py-2 align-top"><button onClick={() => removeEvent(e.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button></td>
+                      <td className="px-3 py-2 align-top">
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => showTrendFor(e.parameter)} className="text-gray-400 hover:text-teal-600" title={`Show SDI trend for ${e.parameter}`} style={{ color: COLORS.teal }}>
+                            <Activity size={14} />
+                          </button>
+                          <button onClick={() => removeEvent(e.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>
+                        </div>
+                      </td>
                     </tr>
                     {(e.evaluation === "Unsatisfactory" || e.notes || e.nextCycleDate) && (
                       <tr className="border-b" style={{ borderColor: "#EEF3F1" }}>
