@@ -1215,9 +1215,15 @@ export default function App() {
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} addManagementReview={addManagementReview}
           deleteManagementReview={deleteManagementReview} stats={stats} currentUser={currentUser} />}
         {tab === "audit" && canSeeAuditBackup && <AuditBackup />}
-        {tab === "settings" && isAdmin && <Settings qcMachines={qcMachines} currentUser={currentUser}
+        {tab === "settings" && isAdmin && <Settings qcMachines={qcMachines} updateQcMachines={updateQcMachines} currentUser={currentUser}
           notificationSettings={notificationSettings} toggleNotificationSettingAction={toggleNotificationSettingAction}
-          laboratories={laboratories} createLaboratoryAction={createLaboratoryAction} activeLaboratoryId={activeLaboratoryId} />}
+          laboratories={laboratories} createLaboratoryAction={createLaboratoryAction} activeLaboratoryId={activeLaboratoryId}
+          qcParameters={qcParameters} updateQcParameters={updateQcParameters} qcControls={qcControls} updateQcControls={updateQcControls}
+          equipment={equipment} testCodeMappings={testCodeMappings} updateTestCodeMappings={updateTestCodeMappings}
+          eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms} programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes}
+          personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} isAdmin={isAdmin} canSeeAllStaff={canSeeAllStaff} canEdit={canEdit}
+          personnelLaboratories={personnelLaboratories} assignPersonnelToLabAction={assignPersonnelToLabAction} unassignPersonnelFromLabAction={unassignPersonnelFromLabAction}
+          canDeleteRecords={canDeleteRecords} />}
       </div>
     </div>
   );
@@ -3590,17 +3596,13 @@ function AuthorizeControl({ run, currentUser, canAuthorize, onAuthorize }) {
 
 // ---------------- IQC & Levey-Jennings (Clause 7.3.7 Quality control) ----------------
 function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns, equipment, updateEquipment, activeLaboratoryId, canDeleteRecords, testCodeMappings, updateTestCodeMappings }) {
-  const [showMachineForm, setShowMachineForm] = useState(false);
-  const [showMappingsFor, setShowMappingsFor] = useState(null);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [selectedMachineId, setSelectedMachineId] = useState(qcMachines[0]?.id || null);
-  const [showParamForm, setShowParamForm] = useState(false);
   const [showDailyEntry, setShowDailyEntry] = useState(false);
   const [selectedParamId, setSelectedParamId] = useState(null);
   const [pointsToShow, setPointsToShowState] = useState(() => localStorage.getItem("lqms_iqc_points_to_show") || "20"); // "7" | "20" | "30" | "all"
   const setPointsToShow = (val) => { setPointsToShowState(val); localStorage.setItem("lqms_iqc_points_to_show", val); };
   const [showValuesTable, setShowValuesTable] = useState(false);
-  const [controlFormFor, setControlFormFor] = useState(null);
   const [runFormFor, setRunFormFor] = useState(null);
   const [showIqcReportPicker, setShowIqcReportPicker] = useState(false);
   const [reportDateFrom, setReportDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
@@ -3611,43 +3613,10 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
     if (!selectedMachineId && qcMachines.length) setSelectedMachineId(qcMachines[0].id);
   }, [qcMachines]);
 
-  /**
-   * If the form was used to pick an existing equipment record rather than
-   * typing a brand-new machine, this links them together automatically —
-   * using the REAL database-assigned id from the synced result, not the
-   * temporary client-side id, same lesson learned from the earlier
-   * NC-from-EQA bug (a temporary id never actually exists in the database).
-   */
-  const addMachine = async (draft) => {
-    const { linkedEquipmentId, ...machineDraft } = draft;
-    const syncedMachines = await updateQcMachines([{ id: uid(), laboratoryId: activeLaboratoryId, ...machineDraft }, ...qcMachines]);
-    setShowMachineForm(false);
-    if (!syncedMachines || !linkedEquipmentId) return;
-    const createdMachine = syncedMachines.find(m => m.name === machineDraft.name);
-    if (createdMachine) {
-      updateEquipment(equipment.map(e => e.id === linkedEquipmentId ? { ...e, qcMachineId: createdMachine.id } : e));
-    }
-  };
-  const removeMachine = (id) => {
-    updateQcMachines(qcMachines.filter(m => m.id !== id));
-    const paramIds = qcParameters.filter(p => p.machineId === id).map(p => p.id);
-    updateQcParameters(qcParameters.filter(p => p.machineId !== id));
-    const controlIds = qcControls.filter(c => paramIds.includes(c.parameterId)).map(c => c.id);
-    updateQcControls(qcControls.filter(c => !paramIds.includes(c.parameterId)));
-    updateQcRuns(qcRuns.filter(r => !controlIds.includes(r.controlId)));
-    if (selectedMachineId === id) setSelectedMachineId(null);
-  };
-
-  const addParameter = (draft) => { updateQcParameters([{ id: uid(), machineId: selectedMachineId, laboratoryId: activeLaboratoryId, ...draft }, ...qcParameters]); setShowParamForm(false); };
-  const removeParameter = (id) => {
-    updateQcParameters(qcParameters.filter(p => p.id !== id));
-    const controlIds = qcControls.filter(c => c.parameterId === id).map(c => c.id);
-    updateQcControls(qcControls.filter(c => c.parameterId !== id));
-    updateQcRuns(qcRuns.filter(r => !controlIds.includes(r.controlId)));
-  };
-
-  const addControl = (parameterId, draft) => { updateQcControls([{ id: uid(), parameterId, laboratoryId: activeLaboratoryId, ...draft }, ...qcControls]); setControlFormFor(null); };
-  const removeControl = (id) => { updateQcControls(qcControls.filter(c => c.id !== id)); updateQcRuns(qcRuns.filter(r => r.controlId !== id)); };
+  // Adding/removing machines, parameters, controls, and test code mappings
+  // is configured from Settings → Configure machines / IQC configuration —
+  // this page focuses on day-to-day use (viewing Levey-Jennings, entering
+  // and authorizing results) against whatever's already set up there.
 
   const addRun = (controlId, draft) => { updateQcRuns([{ id: uid(), controlId, authorized: false, laboratoryId: activeLaboratoryId, ...draft }, ...qcRuns]); setRunFormFor(null); };
   const addRunsBatch = (entries) => {
@@ -3806,9 +3775,6 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
             <button onClick={() => setShowIqcReportPicker(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
               <Download size={14} /> Summary report
             </button>
-            <button onClick={() => setShowMachineForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
-              <Plus size={14} /> Add machine
-            </button>
           </div>
         )}
       </div>
@@ -3851,9 +3817,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
         templateRows={qcMachines.map(m => ({ ID: m.id, Name: m.name, Discipline: m.discipline, Model: m.model }))}
         sheetName="Analysers" filenameBase="lab-analysers" onImportRows={handleImportMachines} canImport={canEdit}
       />
-      <p className="text-xs text-gray-400 -mt-2 mb-4">Download, edit in Excel, then re-import — rows with a matching ID update that analyser; new rows (blank ID) are added. Discipline must be Hematology, Biochemistry, or Immunochemistry.</p>
-
-      {showMachineForm && canEdit && <MachineForm onCancel={() => setShowMachineForm(false)} onSave={addMachine} equipment={equipment} />}
+      <p className="text-xs text-gray-400 -mt-2 mb-4">Download, edit in Excel, then re-import — rows with a matching ID update that analyser; new rows (blank ID) are added. Discipline must be Hematology, Biochemistry, or Immunochemistry. To add a single machine, set its connection protocol, or manage test code mappings, use Settings → Configure machines.</p>
 
       {/* Machine tabs grouped by discipline */}
       <div className="mb-6 space-y-3">
@@ -3897,15 +3861,6 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                 <button onClick={() => setShowDailyEntry(v => !v)} className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
                   <Activity size={13} /> Daily IQC entry
                 </button>
-                <button onClick={() => setShowParamForm(v => !v)} className="text-xs flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-                  <Plus size={13} /> Add parameter
-                </button>
-                {selectedMachine.protocol && selectedMachine.protocol !== "Manual/API" && (
-                  <button onClick={() => setShowMappingsFor(selectedMachine.analyserType)} className="text-xs flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-                    <ListChecks size={13} /> Manage test codes
-                  </button>
-                )}
-                {canDeleteRecords && <button onClick={() => removeMachine(selectedMachine.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={13} /> Remove machine</button>}
               </div>
             )}
           </div>
@@ -3920,7 +3875,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
             />
           )}
 
-          {showParamForm && canEdit && <ParameterForm onCancel={() => setShowParamForm(false)} onSave={addParameter} />}
+          <p className="text-xs text-gray-400 mb-2">To add parameters/controls for this machine, set its protocol, or manage test code mappings, use Settings → Configure machines / IQC configuration.</p>
 
           <div className="flex gap-4 items-start">
             {/* LEFT: parameter list */}
@@ -4057,17 +4012,9 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                     )}
 
                     <div className="pt-3 border-t" style={{ borderColor: "#EEF3F1" }}>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="text-xs font-medium" style={{ color: COLORS.navy }}>Control levels / lots</div>
-                        {canEdit && (
-                          <button onClick={() => setControlFormFor(controlFormFor === param.id ? null : param.id)} className="text-xs flex items-center gap-1 px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-                            <Plus size={12} /> Add level
-                          </button>
-                        )}
-                      </div>
-                      {controlFormFor === param.id && canEdit && <ControlForm onCancel={() => setControlFormFor(null)} onSave={(draft) => addControl(param.id, draft)} />}
+                      <div className="text-xs font-medium mb-2" style={{ color: COLORS.navy }}>Control levels / lots</div>
                       <div className="border rounded-md divide-y mb-3" style={{ borderColor: "#EEF3F1" }}>
-                        {controls.length === 0 && <div className="text-xs text-gray-400 px-3 py-2">No control levels defined. Add one to start logging IQC.</div>}
+                        {controls.length === 0 && <div className="text-xs text-gray-400 px-3 py-2">No control levels defined yet — set these up from Settings → IQC configuration.</div>}
                         {controls.map(c => (
                           <div key={c.id} className="flex items-center gap-3 px-3 py-1.5 text-xs">
                             <span className="font-medium w-32">{c.level}</span>
@@ -4077,7 +4024,6 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                                 {c.expiryDate < todayISO() ? "Expired" : "Expires"} {c.expiryDate}
                               </Badge>
                             )}
-                            {canDeleteRecords && <button onClick={() => removeControl(c.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={12} /></button>}
                           </div>
                         ))}
                       </div>
@@ -4092,21 +4038,12 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                       </div>
                       {runFormFor === param.id && canEdit && <RunForm controls={controls} personnel={personnel} onCancel={() => setRunFormFor(null)} onSave={(controlId, draft) => addRun(controlId, draft)} />}
                     </div>
-
-                    <div className="flex justify-end mt-3">
-                      {canDeleteRecords && <button onClick={() => removeParameter(param.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Remove parameter</button>}
-                    </div>
                   </div>
                 );
               })()}
             </div>
           </div>
         </div>
-      )}
-
-      {showMappingsFor && (
-        <ManageTestCodeMappings analyserType={showMappingsFor} testCodeMappings={testCodeMappings} updateTestCodeMappings={updateTestCodeMappings}
-          qcParameters={qcParameters} activeLaboratoryId={activeLaboratoryId} onClose={() => setShowMappingsFor(null)} />
       )}
     </div>
   );
@@ -4585,7 +4522,6 @@ function RunForm({ controls, personnel, onSave, onCancel }) {
 // ---------------- EQAS (Clause 7.3.7.3 External Quality Assessment) ----------------
 function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createNcFromEqaAction, activeLaboratoryId, laboratories, eqaPrograms, updateEqaPrograms, programAnalytes, updateProgramAnalytes, canDeleteEqaResults }) {
   const [showForm, setShowForm] = useState(false);
-  const [showManagePrograms, setShowManagePrograms] = useState(false);
   const [filterDiscipline, setFilterDiscipline] = useState("All");
   const [filterProgram, setFilterProgram] = useState("All");
   const [filterCycle, setFilterCycle] = useState("All");
@@ -4665,11 +4601,6 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>External Quality Assessment (EQAS)</h1>
         <div className="flex gap-2">
-          {canEdit && (
-            <button onClick={() => setShowManagePrograms(true)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-              <ListChecks size={14} /> Manage programs
-            </button>
-          )}
           <button onClick={() => setShowCycleSummary(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
             <BarChart3 size={14} /> {showCycleSummary ? "Hide" : "Show"} cycle summary
           </button>
@@ -4680,7 +4611,7 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
           )}
         </div>
       </div>
-      <p className="text-sm text-gray-500 mb-4">Proficiency testing / interlaboratory comparison across all laboratories, with automatic SDI evaluation.</p>
+      <p className="text-sm text-gray-500 mb-4">Proficiency testing / interlaboratory comparison across all laboratories, with automatic SDI evaluation. Set up which programs and analytes are available from Settings → EQAS configuration.</p>
 
       {showCycleSummary && (
         <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
@@ -4789,12 +4720,6 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
       </div>
 
       {showForm && canEdit && <EQAForm qcMachines={qcMachines} onCancel={() => setShowForm(false)} onSave={addEvents} laboratories={laboratories} eqaPrograms={eqaPrograms} programAnalytes={programAnalytes} />}
-
-      {showManagePrograms && (
-        <ManageEqaPrograms laboratories={laboratories} eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms}
-          programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} activeLaboratoryId={activeLaboratoryId}
-          onClose={() => setShowManagePrograms(false)} canDeleteRecords={canDeleteRecords} />
-      )}
 
       <div className="bg-white rounded-lg border overflow-x-auto" style={{ borderColor: "#E1EBE8" }}>
         {filtered.length === 0 ? <Empty text="No EQA results logged yet." /> : (
@@ -5039,6 +4964,92 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
 }
 
 // ---------------- Manage the EQA program catalog (add/remove programs and their analytes) ----------------
+// ---------------- Same EQA program management, inline (used in Settings) rather than as a popup ----------------
+function EqasProgramConfig({ laboratories, eqaPrograms, updateEqaPrograms, programAnalytes, updateProgramAnalytes, canDeleteRecords }) {
+  const [labId, setLabId] = useState(laboratories[0]?.id || "");
+  const [newProvider, setNewProvider] = useState("");
+  const [newProgramName, setNewProgramName] = useState("");
+  const [newCycle, setNewCycle] = useState("");
+  const [newStart, setNewStart] = useState("");
+  const [newEnd, setNewEnd] = useState("");
+  const [newAnalyteFor, setNewAnalyteFor] = useState(null);
+  const [newAnalyteText, setNewAnalyteText] = useState("");
+
+  const programsHere = eqaPrograms.filter(p => p.laboratoryId === labId);
+
+  const addProgram = () => {
+    if (!newProvider.trim() || !newProgramName.trim() || !newCycle.trim()) return;
+    updateEqaPrograms([{ id: uid(), laboratoryId: labId, provider: newProvider, programName: newProgramName, cycle: newCycle, startDate: newStart, endDate: newEnd }, ...eqaPrograms]);
+    setNewProvider(""); setNewProgramName(""); setNewCycle(""); setNewStart(""); setNewEnd("");
+  };
+  const removeProgram = (id) => updateEqaPrograms(eqaPrograms.filter(p => p.id !== id));
+
+  const addAnalyte = (programId) => {
+    if (!newAnalyteText.trim()) return;
+    const existingCount = programAnalytes.filter(a => a.programId === programId).length;
+    updateProgramAnalytes([{ id: uid(), programId, analyte: newAnalyteText, sortOrder: existingCount + 1 }, ...programAnalytes]);
+    setNewAnalyteText(""); setNewAnalyteFor(null);
+  };
+  const removeAnalyte = (id) => updateProgramAnalytes(programAnalytes.filter(a => a.id !== id));
+
+  return (
+    <div>
+      <Field label="Laboratory">
+        <select className={inputCls} style={inputStyle} value={labId} onChange={e => setLabId(e.target.value)}>
+          {laboratories.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+        </select>
+      </Field>
+
+      <div className="border rounded-md p-3 mb-4" style={{ borderColor: "#E1EBE8" }}>
+        <div className="text-xs font-medium text-gray-500 mb-2">Add a new program</div>
+        <div className="grid grid-cols-2 gap-2 mb-2">
+          <input className={inputCls} style={inputStyle} value={newProvider} onChange={e => setNewProvider(e.target.value)} placeholder="Provider (e.g. Biorad)" />
+          <input className={inputCls} style={inputStyle} value={newProgramName} onChange={e => setNewProgramName(e.target.value)} placeholder="Program name" />
+          <input className={inputCls} style={inputStyle} value={newCycle} onChange={e => setNewCycle(e.target.value)} placeholder="Cycle (e.g. 25)" />
+          <div />
+          <div><div className="text-[10px] text-gray-400 mb-0.5">Start date</div><input type="date" className={inputCls} style={inputStyle} value={newStart} onChange={e => setNewStart(e.target.value)} /></div>
+          <div><div className="text-[10px] text-gray-400 mb-0.5">End date</div><input type="date" className={inputCls} style={inputStyle} value={newEnd} onChange={e => setNewEnd(e.target.value)} /></div>
+        </div>
+        <button onClick={addProgram} className="text-xs px-3 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Plus size={12} /> Add program</button>
+      </div>
+
+      <div className="text-xs font-medium text-gray-500 mb-2">Existing programs</div>
+      <div className="divide-y" style={{ borderColor: "#E1EBE8" }}>
+        {programsHere.length === 0 && <Empty text="No programs catalogued for this lab yet." />}
+        {programsHere.map(p => {
+          const analytes = programAnalytes.filter(a => a.programId === p.id).sort((a, b) => a.sortOrder - b.sortOrder);
+          return (
+            <div key={p.id} className="py-3">
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">{p.provider} — {p.programName} (Cycle {p.cycle})</span>
+                <span className="text-xs text-gray-400 ml-auto">{p.startDate}{p.startDate && p.endDate ? " – " : ""}{p.endDate}</span>
+                {canDeleteRecords && <button onClick={() => removeProgram(p.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>}
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {analytes.map(a => (
+                  <span key={a.id} className="text-xs px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: COLORS.mint, color: COLORS.teal }}>
+                    {a.analyte}
+                    {canDeleteRecords && <button onClick={() => removeAnalyte(a.id)} className="hover:text-red-500">×</button>}
+                  </span>
+                ))}
+                {newAnalyteFor === p.id ? (
+                  <div className="flex items-center gap-1">
+                    <input autoFocus className="text-xs border rounded-md px-2 py-0.5 w-32" style={{ borderColor: "#D8E5E1" }} value={newAnalyteText}
+                      onChange={e => setNewAnalyteText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") addAnalyte(p.id); if (e.key === "Escape") setNewAnalyteFor(null); }} placeholder="Analyte name" />
+                    <button onClick={() => addAnalyte(p.id)} className="text-xs" style={{ color: COLORS.teal }}>Add</button>
+                  </div>
+                ) : (
+                  <button onClick={() => { setNewAnalyteFor(p.id); setNewAnalyteText(""); }} className="text-xs px-2 py-0.5 rounded-full border" style={{ borderColor: "#D8E5E1", color: "#9AA5A3" }}>+ analyte</button>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function ManageEqaPrograms({ laboratories, eqaPrograms, updateEqaPrograms, programAnalytes, updateProgramAnalytes, activeLaboratoryId, onClose, canDeleteRecords }) {
   const [newProvider, setNewProvider] = useState("");
   const [newProgramName, setNewProgramName] = useState("");
@@ -6070,7 +6081,12 @@ function AuditBackup() {
 }
 
 // ---------------- Settings (Admin only) ----------------
-function Settings({ qcMachines, currentUser, notificationSettings, toggleNotificationSettingAction, laboratories, createLaboratoryAction, activeLaboratoryId }) {
+function Settings({ qcMachines, updateQcMachines, currentUser, notificationSettings, toggleNotificationSettingAction, laboratories, createLaboratoryAction, activeLaboratoryId,
+  qcParameters, updateQcParameters, qcControls, updateQcControls, equipment, testCodeMappings, updateTestCodeMappings,
+  eqaPrograms, updateEqaPrograms, programAnalytes, updateProgramAnalytes,
+  personnel, setPersonnel, updatePersonnel, isAdmin, canSeeAllStaff, canEdit, personnelLaboratories, assignPersonnelToLabAction, unassignPersonnelFromLabAction,
+  canDeleteRecords }) {
+  const [settingsTab, setSettingsTab] = useState("general");
   const [newLabName, setNewLabName] = useState("");
   const [creatingLab, setCreatingLab] = useState(false);
   const [labError, setLabError] = useState("");
@@ -6086,6 +6102,11 @@ function Settings({ qcMachines, currentUser, notificationSettings, toggleNotific
   const [resendStatus, setResendStatus] = useState(null);
   const [resendStatusLoading, setResendStatusLoading] = useState(true);
   const [showSetupChecklist, setShowSetupChecklist] = useState(false);
+  const [showMachineForm, setShowMachineForm] = useState(false);
+  const [showMappingsFor, setShowMappingsFor] = useState(null);
+  const [iqcMachineId, setIqcMachineId] = useState("");
+  const [showParamForm, setShowParamForm] = useState(false);
+  const [controlFormFor, setControlFormFor] = useState(null);
 
   const checkResendStatus = async () => {
     setResendStatusLoading(true);
@@ -6105,7 +6126,7 @@ function Settings({ qcMachines, currentUser, notificationSettings, toggleNotific
   const eqaEndpointUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-eqa-result`;
 
   const sendTestEmail = async () => {
-    if (!currentUser?.email) { setTestEmailStatus("Your own account has no email on file — add one on the Personnel page first."); return; }
+    if (!currentUser?.email) { setTestEmailStatus("Your own account has no email on file — add one on the Personnel tab first."); return; }
     setTestEmailStatus("Sending…");
     try {
       await notificationsApi.sendNotificationEmail(currentUser.email, "Lab QMS test email",
@@ -6153,66 +6174,221 @@ function Settings({ qcMachines, currentUser, notificationSettings, toggleNotific
     }
   };
 
+  const addMachine = async (draft) => {
+    const { linkedEquipmentId, ...machineDraft } = draft;
+    const syncedMachines = await updateQcMachines([{ id: uid(), laboratoryId: activeLaboratoryId, ...machineDraft }, ...qcMachines]);
+    setShowMachineForm(false);
+    if (!syncedMachines || !linkedEquipmentId) return;
+    // linkedEquipmentId (setting the equipment record's own qcMachineId back-link) is intentionally
+    // left as a manual step from the Equipment page here — Settings doesn't carry updateEquipment.
+  };
+  const removeMachine = (id) => {
+    updateQcMachines(qcMachines.filter(m => m.id !== id));
+    const paramIds = qcParameters.filter(p => p.machineId === id).map(p => p.id);
+    updateQcParameters(qcParameters.filter(p => p.machineId !== id));
+    updateQcControls(qcControls.filter(c => !paramIds.includes(c.parameterId)));
+    if (iqcMachineId === id) setIqcMachineId("");
+  };
+
+  const iqcSelectedMachine = qcMachines.find(m => m.id === iqcMachineId);
+  const paramsForIqcMachine = qcParameters.filter(p => p.machineId === iqcMachineId);
+  const addParameter = (draft) => { updateQcParameters([{ id: uid(), machineId: iqcMachineId, laboratoryId: activeLaboratoryId, ...draft }, ...qcParameters]); setShowParamForm(false); };
+  const removeParameter = (id) => {
+    updateQcParameters(qcParameters.filter(p => p.id !== id));
+    updateQcControls(qcControls.filter(c => c.parameterId !== id));
+  };
+  const addControl = (parameterId, draft) => { updateQcControls([{ id: uid(), parameterId, laboratoryId: activeLaboratoryId, ...draft }, ...qcControls]); setControlFormFor(null); };
+  const removeControl = (id) => updateQcControls(qcControls.filter(c => c.id !== id));
+
+  const SETTINGS_TABS = [
+    { id: "general", label: "General" },
+    { id: "machines", label: "Configure machines" },
+    { id: "personnel", label: "Personnel" },
+    { id: "iqc", label: "IQC configuration" },
+    { id: "eqas", label: "EQAS configuration" },
+  ];
+
   return (
     <div className="p-8 max-w-4xl">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Settings</h1>
-      <p className="text-sm text-gray-500 mb-6">Admin-only configuration for Lab QMS.</p>
+      <p className="text-sm text-gray-500 mb-4">Admin-only configuration for Lab QMS.</p>
 
-      <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
-        <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Laboratories</div>
-        <p className="text-xs text-gray-500 mb-3">
-          Each laboratory is a fully separate workspace — its own clause register, tasks, and NCs, with more modules
-          following. Creating one automatically seeds all 34 ISO 15189:2022 clauses for it, ready to use immediately.
-        </p>
-        <div className="border rounded-md divide-y mb-3" style={{ borderColor: "#EEF3F1" }}>
-          {laboratories.length === 0 && <div className="text-xs text-gray-400 px-3 py-3">No laboratories yet.</div>}
-          {laboratories.map(lab => (
-            <div key={lab.id} className="px-3 py-2 text-sm">{lab.name}</div>
-          ))}
-        </div>
-        <div className="flex gap-2">
-          <input value={newLabName} onChange={e => setNewLabName(e.target.value)} placeholder="e.g. Biochemistry"
-            className="text-sm border rounded-md px-3 py-1.5 flex-1" style={{ borderColor: "#D8E5E1" }} />
-          <button disabled={creatingLab || !newLabName.trim()} onClick={async () => {
-            setCreatingLab(true); setLabError("");
-            try { await createLaboratoryAction(newLabName.trim()); setNewLabName(""); }
-            catch (e) { setLabError(e.message); }
-            finally { setCreatingLab(false); }
-          }} className="text-sm px-4 py-1.5 rounded-md text-white disabled:opacity-50" style={{ background: COLORS.teal }}>
-            {creatingLab ? "Creating…" : "Add laboratory"}
+      <div className="flex gap-1 mb-6 border-b" style={{ borderColor: "#E1EBE8" }}>
+        {SETTINGS_TABS.map(t => (
+          <button key={t.id} onClick={() => setSettingsTab(t.id)}
+            className="text-sm px-3 py-2 border-b-2 -mb-px"
+            style={{ borderColor: settingsTab === t.id ? COLORS.teal : "transparent", color: settingsTab === t.id ? COLORS.teal : "#9AA5A3", fontWeight: settingsTab === t.id ? 500 : 400 }}>
+            {t.label}
           </button>
-        </div>
-        {labError && <div className="text-xs mt-2" style={{ color: COLORS.red }}>{labError}</div>}
-        <div className="text-[11px] text-gray-400 mt-2">Assign staff to laboratories from the Personnel page.</div>
+        ))}
       </div>
 
+      {settingsTab === "general" && (
+        <>
+          <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+            <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Laboratories</div>
+            <p className="text-xs text-gray-500 mb-3">
+              Each laboratory is a fully separate workspace — its own clause register, tasks, and NCs, with more modules
+              following. Creating one automatically seeds all 34 ISO 15189:2022 clauses for it, ready to use immediately.
+            </p>
+            <div className="border rounded-md divide-y mb-3" style={{ borderColor: "#EEF3F1" }}>
+              {laboratories.length === 0 && <div className="text-xs text-gray-400 px-3 py-3">No laboratories yet.</div>}
+              {laboratories.map(lab => (
+                <div key={lab.id} className="px-3 py-2 text-sm">{lab.name}</div>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <input value={newLabName} onChange={e => setNewLabName(e.target.value)} placeholder="e.g. Biochemistry"
+                className="text-sm border rounded-md px-3 py-1.5 flex-1" style={{ borderColor: "#D8E5E1" }} />
+              <button disabled={creatingLab || !newLabName.trim()} onClick={async () => {
+                setCreatingLab(true); setLabError("");
+                try { await createLaboratoryAction(newLabName.trim()); setNewLabName(""); }
+                catch (e) { setLabError(e.message); }
+                finally { setCreatingLab(false); }
+              }} className="text-sm px-4 py-1.5 rounded-md text-white disabled:opacity-50" style={{ background: COLORS.teal }}>
+                {creatingLab ? "Creating…" : "Add laboratory"}
+              </button>
+            </div>
+            {labError && <div className="text-xs mt-2" style={{ color: COLORS.red }}>{labError}</div>}
+            <div className="text-[11px] text-gray-400 mt-2">Assign staff to laboratories from the Personnel tab.</div>
+          </div>
 
-      <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
-        <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Machine data interface (IQC & EQAS)</div>
-        <p className="text-xs text-gray-500 mb-3">
-          A one-way connection: any analyser — not tied to any specific brand or model — or middleware sitting between it and
-          the internet, can push a result directly into Lab QMS using an API key below. Nothing is ever sent back to the
-          machine. What the instrument itself needs, to actually reach these endpoints, depends on that specific machine —
-          some can call a web address directly, others need translator/gateway software in between.
-        </p>
-        <div className="p-3 rounded-md text-xs mb-4" style={{ background: COLORS.mint }}>
-          <div className="font-medium mb-1" style={{ color: COLORS.navy }}>IQC endpoint</div>
-          <code className="block mb-2 break-all">{iqcEndpointUrl}</code>
-          <div className="font-medium mb-1" style={{ color: COLORS.navy }}>JSON body</div>
-          <pre className="whitespace-pre-wrap mb-2">{`{
-  "machineName": "exact QC machine name in Lab QMS",
-  "parameter": "exact parameter name",
+          <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+            <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Email sending status</div>
+            <p className="text-xs text-gray-500 mb-3">
+              Live check against Resend's own records — this can only look, never change anything on Resend or your domain registrar.
+            </p>
+            {resendStatusLoading ? (
+              <div className="text-xs text-gray-400">Checking…</div>
+            ) : !resendStatus?.configured ? (
+              <div className="p-3 rounded-md text-xs" style={{ background: "#FEF2F2", color: COLORS.red }}>
+                Not working: {resendStatus?.reason || "unknown reason"}
+              </div>
+            ) : resendStatus.domains.length === 0 ? (
+              <div className="p-3 rounded-md text-xs" style={{ background: "#FEF2F2", color: COLORS.red }}>
+                API key is valid, but no sending domain has been added in Resend yet.
+              </div>
+            ) : (
+              <div className="border rounded-md divide-y" style={{ borderColor: "#EEF3F1" }}>
+                {resendStatus.domains.map(d => (
+                  <div key={d.name} className="px-3 py-2 flex items-center justify-between text-xs">
+                    <span>{d.name}</span>
+                    <Badge color={d.status === "verified" ? COLORS.teal : COLORS.amber}>{d.status}</Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button onClick={checkResendStatus} className="text-xs text-gray-400 underline mt-2">Re-check now</button>
+
+            <div className="mt-4 pt-4 border-t" style={{ borderColor: "#EEF3F1" }}>
+              <button onClick={() => setShowSetupChecklist(v => !v)} className="text-xs underline" style={{ color: COLORS.teal }}>
+                {showSetupChecklist ? "Hide" : "Show"} setup reference (domain, DNS, API key — done outside this app)
+              </button>
+              {showSetupChecklist && (
+                <div className="text-xs text-gray-600 mt-2 space-y-1.5">
+                  <p><strong>These steps happen on Cloudflare and Resend directly, not in Lab QMS</strong> — this app has no login access to either, by design.</p>
+                  <p>1. Register a domain (e.g. Cloudflare Registrar).</p>
+                  <p>2. In Resend → Domains → Add Domain → use a subdomain like <code>notify.yourdomain.com</code>.</p>
+                  <p>3. Copy the DNS records Resend shows, add them at your registrar's DNS settings.</p>
+                  <p>4. In Resend, click Verify — check the status above once it's done.</p>
+                  <p>5. Generate an API key in Resend → API Keys.</p>
+                  <p>6. From Terminal, in the project folder: <code>supabase secrets set RESEND_API_KEY=your_key</code> — this is the only step that connects Resend to this app.</p>
+                  <p>7. If the key is ever regenerated, only step 6 needs repeating.</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+            <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Email notifications</div>
+            <p className="text-xs text-gray-500 mb-3">
+              Turn individual notification emails on or off. The actual sending account (Resend, and its API key) is configured
+              separately as a Supabase secret, deliberately outside the app itself — a key that could be read or changed from
+              this page would defeat the purpose of keeping it secret in the first place.
+            </p>
+            <div className="border rounded-md divide-y mb-4" style={{ borderColor: "#EEF3F1" }}>
+              {NOTIFICATION_EVENT_LABELS.map(({ key, label: eventLabel }) => {
+                const enabled = notificationSettings[key] !== false;
+                return (
+                  <div key={key} className="px-3 py-2 flex items-center justify-between">
+                    <span className="text-sm">{eventLabel}</span>
+                    <button onClick={() => toggleNotificationSettingAction(key, enabled)}
+                      className="text-xs px-3 py-1 rounded-full"
+                      style={{ background: enabled ? COLORS.teal : "#E1EBE8", color: enabled ? "white" : "#9AA5A3" }}>
+                      {enabled ? "On" : "Off"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <button onClick={sendTestEmail} className="text-sm px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+              Send test email to myself
+            </button>
+            {testEmailStatus && <div className="text-xs mt-2 text-gray-500">{testEmailStatus}</div>}
+          </div>
+        </>
+      )}
+
+      {settingsTab === "machines" && (
+        <>
+          <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-sm font-semibold" style={{ color: COLORS.navy }}>Machines / analysers</div>
+              <button onClick={() => setShowMachineForm(v => !v)} className="text-xs flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
+                <Plus size={13} /> Add machine
+              </button>
+            </div>
+            <p className="text-xs text-gray-500 mb-3">Add every analyser here, set its connection protocol if it has one, and manage test code mappings — this drives what's available to select on the IQC page.</p>
+            {showMachineForm && <MachineForm onCancel={() => setShowMachineForm(false)} onSave={addMachine} equipment={equipment} />}
+            <div className="border rounded-md divide-y" style={{ borderColor: "#EEF3F1" }}>
+              {qcMachines.length === 0 && <div className="text-xs text-gray-400 px-3 py-3">No machines added yet.</div>}
+              {qcMachines.map(m => (
+                <div key={m.id} className="px-3 py-2 flex items-center justify-between">
+                  <div>
+                    <div className="text-sm">{m.name} <span className="text-xs text-gray-400">{m.discipline}{m.model ? ` · ${m.model}` : ""}</span></div>
+                    <div className="text-xs text-gray-400 flex items-center gap-1.5 mt-0.5">
+                      {m.protocol && <Badge color={m.protocol === "Manual/API" ? "#9AA5A3" : COLORS.teal}>{m.protocol}</Badge>}
+                      {m.analyserType && <span>{m.analyserType}</span>}
+                      {m.vendorInstrumentId && <span className="text-gray-300">· ID: {m.vendorInstrumentId}</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {m.protocol && m.protocol !== "Manual/API" && (
+                      <button onClick={() => setShowMappingsFor(m.analyserType)} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>Test codes</button>
+                    )}
+                    {canDeleteRecords && <button onClick={() => removeMachine(m.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+            <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Machine data interface (IQC & EQAS)</div>
+            <p className="text-xs text-gray-500 mb-3">
+              A one-way connection: any analyser — not tied to any specific brand or model — or middleware sitting between it and
+              the internet, can push a result directly into Lab QMS using an API key below. Nothing is ever sent back to the
+              machine. What the instrument itself needs, to actually reach these endpoints, depends on that specific machine —
+              some can call a web address directly, others need translator/gateway software in between.
+            </p>
+            <div className="p-3 rounded-md text-xs mb-4" style={{ background: COLORS.mint }}>
+              <div className="font-medium mb-1" style={{ color: COLORS.navy }}>IQC endpoint</div>
+              <code className="block mb-2 break-all">{iqcEndpointUrl}</code>
+              <div className="font-medium mb-1" style={{ color: COLORS.navy }}>JSON body</div>
+              <pre className="whitespace-pre-wrap mb-2">{`{
+  "machineName": "exact QC machine name in Lab QMS",   // OR vendorInstrumentId
+  "parameter": "exact parameter name",                  // OR vendorTestCode (see Configure machines → Test codes)
   "level": "Level 1 (Low)" | "Level 2 (Normal)" | "Level 3 (High)",
   "lotNumber": "optional, disambiguates if needed",
   "value": 5.4,
   "date": "optional, defaults to today",
   "time": "optional"
 }`}</pre>
-          <div className="font-medium mb-1" style={{ color: COLORS.navy }}>EQAS endpoint</div>
-          <code className="block mb-2 break-all">{eqaEndpointUrl}</code>
-          <div className="font-medium mb-1" style={{ color: COLORS.navy }}>JSON body</div>
-          <pre className="whitespace-pre-wrap">{`{
-  "discipline": "Hematology" | "Biochemistry" | "Immunochemistry",
+              <div className="font-medium mb-1" style={{ color: COLORS.navy }}>EQAS endpoint</div>
+              <code className="block mb-2 break-all">{eqaEndpointUrl}</code>
+              <div className="font-medium mb-1" style={{ color: COLORS.navy }}>JSON body</div>
+              <pre className="whitespace-pre-wrap">{`{
+  "discipline": "must match an existing laboratory's name",
   "machineName": "optional",
   "parameter": "e.g. Hemoglobin",
   "provider": "optional, e.g. RIQAS",
@@ -6222,142 +6398,141 @@ function Settings({ qcMachines, currentUser, notificationSettings, toggleNotific
   "peerSD": 0.5,
   "dateReceived": "optional, defaults to today"
 }`}</pre>
-          <div className="text-[11px] text-gray-500 mt-2">
-            Both: header <code>X-API-Key: (your key)</code>, method POST. Machine/parameter/level/lot names must exactly match what's already
-            set up in Lab QMS — nothing is ever auto-created. peerMean/peerSD for EQAS are optional — if omitted, the result is stored
-            for someone to complete once the provider's report arrives. Every result, from either endpoint, arrives requiring the same
-            human review as manual entry — this interface never bypasses that.
-          </div>
-        </div>
-
-        {justCreatedKey && (
-          <div className="p-3 rounded-md mb-4 border" style={{ borderColor: COLORS.amber, background: "#FFFBEB" }}>
-            <div className="text-xs font-semibold mb-1" style={{ color: COLORS.amber }}>Copy this key now — it will never be shown again</div>
-            <code className="block text-sm font-mono break-all mb-2">{justCreatedKey.plainKey}</code>
-            <button onClick={() => { navigator.clipboard?.writeText(justCreatedKey.plainKey); }} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>Copy</button>
-            <button onClick={() => setJustCreatedKey(null)} className="text-xs px-2 py-1 rounded-md text-gray-400 ml-2">Dismiss</button>
-          </div>
-        )}
-
-        <button onClick={() => setShowCreateForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white mb-3" style={{ background: COLORS.teal }}>
-          <Plus size={14} /> Generate new API key
-        </button>
-        {showCreateForm && (
-          <div className="border rounded-md p-3 mb-4" style={{ borderColor: "#EEF3F1" }}>
-            <div className="grid grid-cols-2 gap-3 mb-2">
-              <Field label="Label"><input className={inputCls} style={inputStyle} value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Ozelle EHBT-75 QC feed" /></Field>
-              <Field label="Restrict to one machine (optional)">
-                <select className={inputCls} style={inputStyle} value={restrictToMachine} onChange={e => setRestrictToMachine(e.target.value)}>
-                  <option value="">Any machine</option>
-                  {qcMachines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-                </select>
-              </Field>
+              <div className="text-[11px] text-gray-500 mt-2">
+                Both: header <code>X-API-Key: (your key)</code>, method POST. Machine/parameter/level/lot names must exactly match what's already
+                set up in Lab QMS — nothing is ever auto-created. peerMean/peerSD for EQAS are optional — if omitted, the result is stored
+                for someone to complete once the provider's report arrives. Every result, from either endpoint, arrives requiring the same
+                human review as manual entry — this interface never bypasses that.
+              </div>
             </div>
-            {createError && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{createError}</div>}
-            <div className="flex justify-end gap-2">
-              <button onClick={() => setShowCreateForm(false)} className="text-xs px-3 py-1.5 text-gray-500">Cancel</button>
-              <button disabled={creating} onClick={handleCreate} className="text-xs px-3 py-1.5 rounded-md text-white disabled:opacity-50" style={{ background: COLORS.teal }}>
-                {creating ? "Generating…" : "Generate key"}
-              </button>
-            </div>
-          </div>
-        )}
 
-        <div className="border rounded-md divide-y" style={{ borderColor: "#EEF3F1" }}>
-          {loading && <div className="text-xs text-gray-400 px-3 py-3">Loading…</div>}
-          {!loading && keys.length === 0 && <div className="text-xs text-gray-400 px-3 py-3">No API keys yet.</div>}
-          {!loading && keys.map(k => {
-            const machine = qcMachines.find(m => m.id === k.qc_machine_id);
-            return (
-              <div key={k.id} className="px-3 py-2 flex items-center justify-between">
-                <div>
-                  <div className="text-sm">{k.label} <span className="text-xs text-gray-400 font-mono">({k.key_prefix}…)</span></div>
-                  <div className="text-xs text-gray-400">
-                    {machine ? `Restricted to ${machine.name}` : "Any machine"} · created {k.created_at.slice(0, 10)}
-                    {k.last_used_at ? ` · last used ${k.last_used_at.slice(0, 10)}` : " · never used"}
-                    {k.revoked_at ? " · " : ""}{k.revoked_at && <span style={{ color: COLORS.red }}>revoked {k.revoked_at.slice(0, 10)}</span>}
-                  </div>
+            {justCreatedKey && (
+              <div className="p-3 rounded-md mb-4 border" style={{ borderColor: COLORS.amber, background: "#FFFBEB" }}>
+                <div className="text-xs font-semibold mb-1" style={{ color: COLORS.amber }}>Copy this key now — it will never be shown again</div>
+                <code className="block text-sm font-mono break-all mb-2">{justCreatedKey.plainKey}</code>
+                <button onClick={() => { navigator.clipboard?.writeText(justCreatedKey.plainKey); }} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>Copy</button>
+                <button onClick={() => setJustCreatedKey(null)} className="text-xs px-2 py-1 rounded-md text-gray-400 ml-2">Dismiss</button>
+              </div>
+            )}
+
+            <button onClick={() => setShowCreateForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white mb-3" style={{ background: COLORS.teal }}>
+              <Plus size={14} /> Generate new API key
+            </button>
+            {showCreateForm && (
+              <div className="border rounded-md p-3 mb-4" style={{ borderColor: "#EEF3F1" }}>
+                <div className="grid grid-cols-2 gap-3 mb-2">
+                  <Field label="Label"><input className={inputCls} style={inputStyle} value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Alinity ci-series QC feed" /></Field>
+                  <Field label="Restrict to one machine (optional)">
+                    <select className={inputCls} style={inputStyle} value={restrictToMachine} onChange={e => setRestrictToMachine(e.target.value)}>
+                      <option value="">Any machine</option>
+                      {qcMachines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                    </select>
+                  </Field>
                 </div>
-                {!k.revoked_at && <button onClick={() => handleRevoke(k.id)} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.red, color: COLORS.red }}>Revoke</button>}
+                {createError && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{createError}</div>}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setShowCreateForm(false)} className="text-xs px-3 py-1.5 text-gray-500">Cancel</button>
+                  <button disabled={creating} onClick={handleCreate} className="text-xs px-3 py-1.5 rounded-md text-white disabled:opacity-50" style={{ background: COLORS.teal }}>
+                    {creating ? "Generating…" : "Generate key"}
+                  </button>
+                </div>
               </div>
-            );
-          })}
-        </div>
-      </div>
+            )}
 
-      <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
-        <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Email sending status</div>
-        <p className="text-xs text-gray-500 mb-3">
-          Live check against Resend's own records — this can only look, never change anything on Resend or your domain registrar.
-        </p>
-        {resendStatusLoading ? (
-          <div className="text-xs text-gray-400">Checking…</div>
-        ) : !resendStatus?.configured ? (
-          <div className="p-3 rounded-md text-xs" style={{ background: "#FEF2F2", color: COLORS.red }}>
-            Not working: {resendStatus?.reason || "unknown reason"}
+            <div className="border rounded-md divide-y" style={{ borderColor: "#EEF3F1" }}>
+              {loading && <div className="text-xs text-gray-400 px-3 py-3">Loading…</div>}
+              {!loading && keys.length === 0 && <div className="text-xs text-gray-400 px-3 py-3">No API keys yet.</div>}
+              {!loading && keys.map(k => {
+                const machine = qcMachines.find(m => m.id === k.qc_machine_id);
+                return (
+                  <div key={k.id} className="px-3 py-2 flex items-center justify-between">
+                    <div>
+                      <div className="text-sm">{k.label} <span className="text-xs text-gray-400 font-mono">({k.key_prefix}…)</span></div>
+                      <div className="text-xs text-gray-400">
+                        {machine ? `Restricted to ${machine.name}` : "Any machine"} · created {k.created_at.slice(0, 10)}
+                        {k.last_used_at ? ` · last used ${k.last_used_at.slice(0, 10)}` : " · never used"}
+                        {k.revoked_at ? " · " : ""}{k.revoked_at && <span style={{ color: COLORS.red }}>revoked {k.revoked_at.slice(0, 10)}</span>}
+                      </div>
+                    </div>
+                    {!k.revoked_at && <button onClick={() => handleRevoke(k.id)} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.red, color: COLORS.red }}>Revoke</button>}
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        ) : resendStatus.domains.length === 0 ? (
-          <div className="p-3 rounded-md text-xs" style={{ background: "#FEF2F2", color: COLORS.red }}>
-            API key is valid, but no sending domain has been added in Resend yet.
-          </div>
-        ) : (
-          <div className="border rounded-md divide-y" style={{ borderColor: "#EEF3F1" }}>
-            {resendStatus.domains.map(d => (
-              <div key={d.name} className="px-3 py-2 flex items-center justify-between text-xs">
-                <span>{d.name}</span>
-                <Badge color={d.status === "verified" ? COLORS.teal : COLORS.amber}>{d.status}</Badge>
+
+          {showMappingsFor && (
+            <ManageTestCodeMappings analyserType={showMappingsFor} testCodeMappings={testCodeMappings} updateTestCodeMappings={updateTestCodeMappings}
+              qcParameters={qcParameters} activeLaboratoryId={activeLaboratoryId} onClose={() => setShowMappingsFor(null)} />
+          )}
+        </>
+      )}
+
+      {settingsTab === "personnel" && (
+        <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canSeeAllStaff={canSeeAllStaff} canEdit={canEdit}
+          laboratories={laboratories} personnelLaboratories={personnelLaboratories} assignPersonnelToLabAction={assignPersonnelToLabAction} unassignPersonnelFromLabAction={unassignPersonnelFromLabAction} />
+      )}
+
+      {settingsTab === "iqc" && (
+        <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+          <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>IQC parameters & controls</div>
+          <p className="text-xs text-gray-500 mb-3">Map which analytes (parameters) and QC controls belong to each machine — this is what shows up when entering daily IQC results.</p>
+          <Field label="Machine">
+            <select className={inputCls} style={inputStyle} value={iqcMachineId} onChange={e => setIqcMachineId(e.target.value)}>
+              <option value="">Select a machine…</option>
+              {qcMachines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </Field>
+          {iqcSelectedMachine && (
+            <div className="mt-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs font-medium text-gray-500">Parameters for {iqcSelectedMachine.name}</div>
+                <button onClick={() => setShowParamForm(v => !v)} className="text-xs flex items-center gap-1 px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                  <Plus size={12} /> Add parameter
+                </button>
               </div>
-            ))}
-          </div>
-        )}
-        <button onClick={checkResendStatus} className="text-xs text-gray-400 underline mt-2">Re-check now</button>
-
-        <div className="mt-4 pt-4 border-t" style={{ borderColor: "#EEF3F1" }}>
-          <button onClick={() => setShowSetupChecklist(v => !v)} className="text-xs underline" style={{ color: COLORS.teal }}>
-            {showSetupChecklist ? "Hide" : "Show"} setup reference (domain, DNS, API key — done outside this app)
-          </button>
-          {showSetupChecklist && (
-            <div className="text-xs text-gray-600 mt-2 space-y-1.5">
-              <p><strong>These steps happen on Cloudflare and Resend directly, not in Lab QMS</strong> — this app has no login access to either, by design.</p>
-              <p>1. Register a domain (e.g. Cloudflare Registrar).</p>
-              <p>2. In Resend → Domains → Add Domain → use a subdomain like <code>notify.yourdomain.com</code>.</p>
-              <p>3. Copy the DNS records Resend shows, add them at your registrar's DNS settings.</p>
-              <p>4. In Resend, click Verify — check the status above once it's done.</p>
-              <p>5. Generate an API key in Resend → API Keys.</p>
-              <p>6. From Terminal, in the project folder: <code>supabase secrets set RESEND_API_KEY=your_key</code> — this is the only step that connects Resend to this app.</p>
-              <p>7. If the key is ever regenerated, only step 6 needs repeating.</p>
+              {showParamForm && <ParameterForm onCancel={() => setShowParamForm(false)} onSave={addParameter} />}
+              <div className="border rounded-md divide-y" style={{ borderColor: "#EEF3F1" }}>
+                {paramsForIqcMachine.length === 0 && <div className="text-xs text-gray-400 px-3 py-3">No parameters yet.</div>}
+                {paramsForIqcMachine.map(param => {
+                  const controlsForParam = qcControls.filter(c => c.parameterId === param.id);
+                  return (
+                    <div key={param.id} className="px-3 py-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm">{param.name}{param.unit ? ` (${param.unit})` : ""}</span>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => setControlFormFor(controlFormFor === param.id ? null : param.id)} className="text-xs px-2 py-0.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>+ control</button>
+                          {canDeleteRecords && <button onClick={() => removeParameter(param.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>}
+                        </div>
+                      </div>
+                      {controlFormFor === param.id && <ControlForm onCancel={() => setControlFormFor(null)} onSave={(draft) => addControl(param.id, draft)} />}
+                      {controlsForParam.length > 0 && (
+                        <div className="mt-1.5 pl-3 space-y-1">
+                          {controlsForParam.map(c => (
+                            <div key={c.id} className="flex items-center justify-between text-xs text-gray-500">
+                              <span>{c.level} · lot {c.lotNumber} · mean {c.mean} SD {c.sd}</span>
+                              {canDeleteRecords && <button onClick={() => removeControl(c.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={11} /></button>}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>
-      </div>
+      )}
 
-      <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
-        <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Email notifications</div>
-        <p className="text-xs text-gray-500 mb-3">
-          Turn individual notification emails on or off. The actual sending account (Resend, and its API key) is configured
-          separately as a Supabase secret, deliberately outside the app itself — a key that could be read or changed from
-          this page would defeat the purpose of keeping it secret in the first place.
-        </p>
-        <div className="border rounded-md divide-y mb-4" style={{ borderColor: "#EEF3F1" }}>
-          {NOTIFICATION_EVENT_LABELS.map(({ key, label: eventLabel }) => {
-            const enabled = notificationSettings[key] !== false;
-            return (
-              <div key={key} className="px-3 py-2 flex items-center justify-between">
-                <span className="text-sm">{eventLabel}</span>
-                <button onClick={() => toggleNotificationSettingAction(key, enabled)}
-                  className="text-xs px-3 py-1 rounded-full"
-                  style={{ background: enabled ? COLORS.teal : "#E1EBE8", color: enabled ? "white" : "#9AA5A3" }}>
-                  {enabled ? "On" : "Off"}
-                </button>
-              </div>
-            );
-          })}
+      {settingsTab === "eqas" && (
+        <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+          <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>EQAS programs</div>
+          <p className="text-xs text-gray-500 mb-3">Set up which EQA/PT programs each laboratory participates in, and the analytes tested under each — this drives the dropdowns when logging an EQAS result.</p>
+          <EqasProgramConfig laboratories={laboratories} eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms}
+            programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} canDeleteRecords={canDeleteRecords} />
         </div>
-        <button onClick={sendTestEmail} className="text-sm px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-          Send test email to myself
-        </button>
-        {testEmailStatus && <div className="text-xs mt-2 text-gray-500">{testEmailStatus}</div>}
-      </div>
+      )}
     </div>
   );
 }
