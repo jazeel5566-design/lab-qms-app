@@ -6222,6 +6222,13 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
   const [showSetupChecklist, setShowSetupChecklist] = useState(false);
   const [showMachineForm, setShowMachineForm] = useState(false);
   const [showMappingsFor, setShowMappingsFor] = useState(null);
+  const [testApiKey, setTestApiKey] = useState("");
+  const [testMachineId, setTestMachineId] = useState("");
+  const [testParamName, setTestParamName] = useState("");
+  const [testLevel, setTestLevel] = useState("");
+  const [testValue, setTestValue] = useState("");
+  const [testSending, setTestSending] = useState(false);
+  const [testResult, setTestResult] = useState(null);
   const [iqcMachineId, setIqcMachineId] = useState("");
   const [showParamForm, setShowParamForm] = useState(false);
   const [controlFormFor, setControlFormFor] = useState(null);
@@ -6242,6 +6249,28 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
 
   const iqcEndpointUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-qc-result`;
   const eqaEndpointUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ingest-eqa-result`;
+
+  const sendTestPayload = async () => {
+    setTestSending(true); setTestResult(null);
+    try {
+      const machine = qcMachines.find(m => m.id === testMachineId);
+      const res = await fetch(iqcEndpointUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-API-Key": testApiKey },
+        body: JSON.stringify({ machineName: machine?.name, parameter: testParamName, level: testLevel, value: parseFloat(testValue) }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setTestResult({ ok: true, message: `Success — the result was accepted and logged. Check the IQC page for "${machine?.name}" to confirm.` });
+      } else {
+        setTestResult({ ok: false, message: `Rejected (${res.status}): ${data.error || "unknown error"}` });
+      }
+    } catch (e) {
+      setTestResult({ ok: false, message: "Could not reach the endpoint: " + e.message });
+    } finally {
+      setTestSending(false);
+    }
+  };
 
   const sendTestEmail = async () => {
     if (!currentUser?.email) { setTestEmailStatus("Your own account has no email on file — add one on the Personnel tab first."); return; }
@@ -6321,6 +6350,7 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
   const SETTINGS_TABS = [
     { id: "general", label: "General" },
     { id: "machines", label: "Configure machines" },
+    { id: "interface", label: "Interface engine" },
     { id: "personnel", label: "Personnel" },
     { id: "iqc", label: "IQC configuration" },
     { id: "eqas", label: "EQAS configuration" },
@@ -6480,15 +6510,29 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
               ))}
             </div>
           </div>
+        </>
+      )}
 
+      {settingsTab === "interface" && (
+        <>
           <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
-            <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Machine data interface (IQC & EQAS)</div>
+            <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>How this connects to an interface engine (e.g. Mirth Connect)</div>
             <p className="text-xs text-gray-500 mb-3">
-              A one-way connection: any analyser — not tied to any specific brand or model — or middleware sitting between it and
-              the internet, can push a result directly into Lab QMS using an API key below. Nothing is ever sent back to the
-              machine. What the instrument itself needs, to actually reach these endpoints, depends on that specific machine —
-              some can call a web address directly, others need translator/gateway software in between.
+              This app never talks to Mirth Connect (or any interface engine) directly, and there's nothing to "connect" from
+              this side — it only ever receives. An analyser like Abbott Alinity or a Roche cobas system speaks HL7 or ASTM,
+              which this app can't understand on its own; Mirth Connect (free/open-source) sits on your lab network, receives
+              those HL7/ASTM messages, translates them, and makes an outbound HTTPS call into the endpoint below — the same way
+              any script or middleware would. All of Mirth's own setup (its listener port, channel, HL7 message mapping) happens
+              entirely inside Mirth's own admin console, not here.
             </p>
+            <div className="p-3 rounded-md text-xs mb-3" style={{ background: COLORS.mint }}>
+              <div className="font-medium mb-1" style={{ color: COLORS.navy }}>What to configure inside Mirth Connect</div>
+              <ol className="list-decimal ml-4 space-y-1">
+                <li>Source: TCP Listener (MLLP) on whatever port the analyser is configured to connect to</li>
+                <li>A transformer step that reads the relevant OBX segments and maps the analyser's own test code to what you've set up under Settings → Configure machines → Test codes</li>
+                <li>Destination: HTTP Sender — POST to the IQC endpoint below, header <code>X-API-Key</code> set to a key generated below, JSON body matching the shape shown below</li>
+              </ol>
+            </div>
             <div className="p-3 rounded-md text-xs mb-4" style={{ background: COLORS.mint }}>
               <div className="font-medium mb-1" style={{ color: COLORS.navy }}>IQC endpoint</div>
               <code className="block mb-2 break-all">{iqcEndpointUrl}</code>
@@ -6579,10 +6623,42 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
             </div>
           </div>
 
-          {showMappingsFor && (
-            <ManageTestCodeMappings analyserType={showMappingsFor} testCodeMappings={testCodeMappings} updateTestCodeMappings={updateTestCodeMappings}
-              qcParameters={qcParameters} activeLaboratoryId={activeLaboratoryId} onClose={() => setShowMappingsFor(null)} />
-          )}
+          <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
+            <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>Test the connection</div>
+            <p className="text-xs text-gray-500 mb-3">
+              Sends one real result straight to the IQC endpoint above using a key you paste in below — the same call Mirth
+              Connect (or anything else) would make. Confirms the receiving side works correctly before wiring up a real
+              interface engine. The key is only used for this one request; it isn't saved anywhere.
+            </p>
+            <div className="grid grid-cols-2 gap-3 mb-2">
+              <Field label="API key"><input className={inputCls} style={inputStyle} value={testApiKey} onChange={e => setTestApiKey(e.target.value)} placeholder="lqms_…" /></Field>
+              <Field label="Machine">
+                <select className={inputCls} style={inputStyle} value={testMachineId} onChange={e => setTestMachineId(e.target.value)}>
+                  <option value="">Select…</option>{qcMachines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Parameter">
+                <select className={inputCls} style={inputStyle} value={testParamName} onChange={e => setTestParamName(e.target.value)}>
+                  <option value="">Select…</option>{qcParameters.filter(p => p.machineId === testMachineId).map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Level">
+                <select className={inputCls} style={inputStyle} value={testLevel} onChange={e => setTestLevel(e.target.value)}>
+                  <option value="">Select…</option>{CONTROL_LEVELS.map(l => <option key={l}>{l}</option>)}
+                </select>
+              </Field>
+              <Field label="Value"><input type="number" step="any" className={inputCls} style={inputStyle} value={testValue} onChange={e => setTestValue(e.target.value)} /></Field>
+            </div>
+            <button onClick={sendTestPayload} disabled={testSending || !testApiKey || !testMachineId || !testParamName || !testLevel || testValue === ""}
+              className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-50" style={{ background: COLORS.teal }}>
+              {testSending ? "Sending…" : "Send test payload"}
+            </button>
+            {testResult && (
+              <div className="text-xs mt-2 p-2 rounded-md" style={{ background: testResult.ok ? COLORS.mint : "#FEF2F2", color: testResult.ok ? COLORS.teal : COLORS.red }}>
+                {testResult.message}
+              </div>
+            )}
+          </div>
         </>
       )}
 
@@ -6656,6 +6732,11 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
           <EqasProgramConfig laboratories={laboratories} eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms}
             programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} canDeleteRecords={canDeleteRecords} />
         </div>
+      )}
+
+      {showMappingsFor && (
+        <ManageTestCodeMappings analyserType={showMappingsFor} testCodeMappings={testCodeMappings} updateTestCodeMappings={updateTestCodeMappings}
+          qcParameters={qcParameters} activeLaboratoryId={activeLaboratoryId} onClose={() => setShowMappingsFor(null)} />
       )}
     </div>
   );
