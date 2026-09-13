@@ -6353,7 +6353,7 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
-                    {m.protocol && m.protocol !== "Manual/API" && (
+                    {m.analyserType && (
                       <button onClick={() => setShowMappingsFor(m.analyserType)} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>Test codes</button>
                     )}
                     {canDeleteRecords && <button onClick={() => removeMachine(m.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={14} /></button>}
