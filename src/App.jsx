@@ -3598,16 +3598,18 @@ function AuthorizeControl({ run, currentUser, canAuthorize, onAuthorize }) {
 function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns, equipment, updateEquipment, activeLaboratoryId, canDeleteRecords, testCodeMappings, updateTestCodeMappings }) {
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [selectedMachineId, setSelectedMachineId] = useState(qcMachines[0]?.id || null);
-  const [showDailyEntry, setShowDailyEntry] = useState(false);
-  const [selectedParamId, setSelectedParamId] = useState(null);
+  const [showNewEntry, setShowNewEntry] = useState(false);
   const [pointsToShow, setPointsToShowState] = useState(() => localStorage.getItem("lqms_iqc_points_to_show") || "20"); // "7" | "20" | "30" | "all"
   const setPointsToShow = (val) => { setPointsToShowState(val); localStorage.setItem("lqms_iqc_points_to_show", val); };
-  const [showValuesTable, setShowValuesTable] = useState(false);
-  const [runFormFor, setRunFormFor] = useState(null);
+  const [expandedControlId, setExpandedControlId] = useState(null);
   const [showIqcReportPicker, setShowIqcReportPicker] = useState(false);
   const [reportDateFrom, setReportDateFrom] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().slice(0, 10); });
   const [reportDateTo, setReportDateTo] = useState(todayISO());
   const [reportMachineId, setReportMachineId] = useState("All");
+  const [filterDiscipline, setFilterDiscipline] = useState("All");
+  const [filterMaterial, setFilterMaterial] = useState("All");
+  const [filterLot, setFilterLot] = useState("All");
+  const [filterLevel, setFilterLevel] = useState("All");
 
   useEffect(() => {
     if (!selectedMachineId && qcMachines.length) setSelectedMachineId(qcMachines[0].id);
@@ -3618,7 +3620,6 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
   // this page focuses on day-to-day use (viewing Levey-Jennings, entering
   // and authorizing results) against whatever's already set up there.
 
-  const addRun = (controlId, draft) => { updateQcRuns([{ id: uid(), controlId, authorized: false, laboratoryId: activeLaboratoryId, ...draft }, ...qcRuns]); setRunFormFor(null); };
   const addRunsBatch = (entries) => {
     const newRuns = entries.map(e => ({ id: uid(), controlId: e.controlId, authorized: false, laboratoryId: activeLaboratoryId, ...e.draft }));
     updateQcRuns([...newRuns, ...qcRuns]);
@@ -3628,6 +3629,35 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
   const machinesByDiscipline = DISCIPLINES.map(d => ({ discipline: d, machines: qcMachines.filter(m => m.discipline === d) }));
   const selectedMachine = qcMachines.find(m => m.id === selectedMachineId);
   const paramsForMachine = qcParameters.filter(p => p.machineId === selectedMachineId);
+
+  // Filter options are derived from controls belonging to the CURRENTLY
+  // SELECTED machine, narrowing progressively — e.g. picking a QC
+  // material only offers lot numbers that material actually has.
+  const controlsForMachine = qcControls.filter(c => paramsForMachine.some(p => p.id === c.parameterId));
+  const materialOptions = [...new Set(controlsForMachine.map(c => c.materialName).filter(Boolean))].sort();
+  const lotOptions = [...new Set(controlsForMachine
+    .filter(c => filterMaterial === "All" || c.materialName === filterMaterial)
+    .map(c => c.lotNumber).filter(Boolean))].sort();
+
+  const relevantControls = controlsForMachine
+    .filter(c => filterMaterial === "All" || c.materialName === filterMaterial)
+    .filter(c => filterLot === "All" || c.lotNumber === filterLot)
+    .filter(c => filterLevel === "All" || c.level === filterLevel);
+
+  /** One row per logged run, evaluated against Westgard rules within its own control's series (same evaluation the old per-parameter panel did), flattened across every control that matches the active filters, most recent first. */
+  const iqcTableRows = [];
+  const evaldByControlId = {};
+  relevantControls.forEach(ctrl => {
+    const param = qcParameters.find(p => p.id === ctrl.parameterId);
+    const runsAsc = qcRuns.filter(r => r.controlId === ctrl.id)
+      .map(r => ({ ...r, mean: ctrl.mean, sd: ctrl.sd }))
+      .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
+    const evald = evaluateControlSeries(runsAsc);
+    const withR4s = applyR4s(evald, evald);
+    evaldByControlId[ctrl.id] = withR4s;
+    withR4s.forEach(r => iqcTableRows.push({ ...r, param, ctrl }));
+  });
+  iqcTableRows.sort((a, b) => (b.date + (b.time || "")).localeCompare(a.date + (a.time || "")));
 
   const buildIqcReportRows = () => {
     return qcRuns
@@ -3704,65 +3734,6 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
    * is what prints. Represented as a data table per level rather than a
    * chart image, consistent with every other report in this app.
    */
-  const printParameterLJReport = (param, controls, perControlEvald, withR4sById) => {
-    const w = window.open("", "_blank");
-    if (!w) { alert("Please allow pop-ups for this site to print the report."); return; }
-    const levelSections = controls.map(ctrl => {
-      const evaldRuns = (perControlEvald[ctrl.id] || []).map(r => ({ ...r, ...withR4sById[r.id] }));
-      const sliced = pointsToShow === "all" ? evaldRuns : evaldRuns.slice(-Number(pointsToShow));
-      const rows = sliced.map(r => `
-        <tr>
-          <td>${escapeHtml(r.date)}${r.time ? " " + escapeHtml(r.time) : ""}</td>
-          <td>${escapeHtml(r.value)}</td>
-          <td>${escapeHtml(r.z.toFixed(2))}</td>
-          <td>${r.violations.length ? r.violations.map(v => escapeHtml(RULE_LABEL[v] || v)).join(", ") : "In control"}</td>
-          <td>${r.authorized ? "Yes" : "No"}</td>
-        </tr>`).join("");
-      return `
-        <h2>${escapeHtml(ctrl.level)} \u2014 Lot ${escapeHtml(ctrl.lotNumber)} \u00b7 Mean ${escapeHtml(ctrl.mean)} \u00b7 SD ${escapeHtml(ctrl.sd)}</h2>
-        <table>
-          <thead><tr><th>Date</th><th>Value</th><th>Z-score</th><th>Violations</th><th>Authorized</th></tr></thead>
-          <tbody>${rows || `<tr><td colspan="5">No results in this window.</td></tr>`}</tbody>
-        </table>`;
-    }).join("");
-    w.document.write(`<!DOCTYPE html><html><head><title>${escapeHtml(param.name)} \u2014 Levey-Jennings</title>
-      <style>
-        body { font-family: -apple-system, system-ui, sans-serif; padding: 32px; color: #0F2A3D; }
-        h1 { font-size: 18px; margin-bottom: 2px; }
-        h2 { font-size: 13px; margin: 20px 0 6px; }
-        p.meta { color: #6B7A78; font-size: 12px; margin-top: 0; margin-bottom: 20px; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
-        th, td { border: 1px solid #D8E5E1; padding: 6px 10px; font-size: 12px; text-align: left; }
-        th { background: #0F2A3D; color: white; }
-        tr:nth-child(even) td { background: #F6FAF9; }
-      </style></head>
-      <body>
-        <h1>${escapeHtml(param.name)} (${escapeHtml(param.unit || "")}) \u2014 Levey-Jennings</h1>
-        <p class="meta">Lab QMS \u2014 showing ${pointsToShow === "all" ? "all points" : `last ${pointsToShow} points`} per level \u2014 generated ${escapeHtml(new Date().toLocaleString())}</p>
-        ${levelSections}
-      </body></html>`);
-    w.document.close();
-    w.focus();
-    w.print();
-  };
-
-  const handleImportMachines = (rows) => {
-    const next = [...qcMachines];
-    let count = 0;
-    rows.forEach(row => {
-      const id = cellGet(row, "ID", "Id", "id");
-      const rName = cellGet(row, "Name", "name");
-      if (!rName) return;
-      const rec = { name: rName, discipline: cellGet(row, "Discipline", "discipline") || DISCIPLINES[0], model: cellGet(row, "Model", "model") };
-      const idx = id ? next.findIndex(m => m.id === id) : -1;
-      if (idx >= 0) next[idx] = { ...next[idx], ...rec };
-      else next.push({ id: uid(), laboratoryId: activeLaboratoryId, ...rec });
-      count++;
-    });
-    updateQcMachines(next);
-    return count;
-  };
-
   return (
     <div className="p-8 max-w-6xl">
       <div className="flex items-center justify-between mb-1">
@@ -3812,21 +3783,36 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
         />
       )}
 
-      <ImportExportBar
-        label="analyser list"
-        templateRows={qcMachines.map(m => ({ ID: m.id, Name: m.name, Discipline: m.discipline, Model: m.model }))}
-        sheetName="Analysers" filenameBase="lab-analysers" onImportRows={handleImportMachines} canImport={canEdit}
-      />
-      <p className="text-xs text-gray-400 -mt-2 mb-4">Download, edit in Excel, then re-import — rows with a matching ID update that analyser; new rows (blank ID) are added. Discipline must be Hematology, Biochemistry, or Immunochemistry. To add a single machine, set its connection protocol, or manage test code mappings, use Settings → Configure machines.</p>
+      <p className="text-xs text-gray-400 -mb-2">To add machines, parameters, or control levels, use Settings → Configure machines / IQC configuration.</p>
 
-      {/* Machine tabs grouped by discipline */}
-      <div className="mb-6 space-y-3">
-        {machinesByDiscipline.map(group => group.machines.length > 0 && (
+      {/* Filter bar — narrows both the machine tabs below and the results table further down */}
+      <div className="flex flex-wrap gap-2 my-4">
+        <select value={filterDiscipline} onChange={e => { setFilterDiscipline(e.target.value); setSelectedMachineId(null); }} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+          <option value="All">All disciplines</option>{DISCIPLINES.map(d => <option key={d}>{d}</option>)}
+        </select>
+        <select value={selectedMachineId || "All"} onChange={e => setSelectedMachineId(e.target.value === "All" ? null : e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+          <option value="All">Select a machine…</option>
+          {qcMachines.filter(m => filterDiscipline === "All" || m.discipline === filterDiscipline).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+        </select>
+        <select value={filterMaterial} onChange={e => { setFilterMaterial(e.target.value); setFilterLot("All"); }} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+          <option value="All">All QC materials</option>{materialOptions.map(m => <option key={m}>{m}</option>)}
+        </select>
+        <select value={filterLot} onChange={e => setFilterLot(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+          <option value="All">All lot numbers</option>{lotOptions.map(l => <option key={l}>{l}</option>)}
+        </select>
+        <select value={filterLevel} onChange={e => setFilterLevel(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+          <option value="All">All levels</option>{CONTROL_LEVELS.map(l => <option key={l}>{l}</option>)}
+        </select>
+      </div>
+
+      {/* Machine tabs — quick visual navigation, kept in sync with the Machine filter above */}
+      <div className="mb-4 space-y-3">
+        {machinesByDiscipline.map(group => (filterDiscipline === "All" || group.discipline === filterDiscipline) && group.machines.length > 0 && (
           <div key={group.discipline}>
             <div className="text-xs font-medium mb-1.5" style={{ color: DISCIPLINE_COLOR[group.discipline] }}>{group.discipline}</div>
             <div className="flex flex-wrap gap-2">
               {group.machines.map(m => (
-                <button key={m.id} onClick={() => { setSelectedMachineId(m.id); setSelectedParamId(null); }}
+                <button key={m.id} onClick={() => setSelectedMachineId(m.id)}
                   className="text-sm px-3 py-1.5 rounded-md border flex items-center gap-1.5"
                   style={{
                     borderColor: selectedMachineId === m.id ? DISCIPLINE_COLOR[group.discipline] : "#D8E5E1",
@@ -3839,7 +3825,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
             </div>
           </div>
         ))}
-        {qcMachines.length === 0 && <Empty text="No analysers added yet. Add a machine to begin logging IQC." />}
+        {qcMachines.length === 0 && <Empty text="No analysers added yet — add one from Settings → Configure machines." />}
       </div>
 
       {selectedMachine && (
@@ -3857,191 +3843,96 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
               )}
             </div>
             {canEdit && (
-              <div className="flex gap-2">
-                <button onClick={() => setShowDailyEntry(v => !v)} className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
-                  <Activity size={13} /> Daily IQC entry
-                </button>
-              </div>
+              <button onClick={() => setShowNewEntry(true)} className="text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
+                <Plus size={14} /> New entry
+              </button>
             )}
           </div>
 
-          {showDailyEntry && canEdit && (
-            <DailyIQCEntry
-              parameters={paramsForMachine}
-              controls={qcControls.filter(c => paramsForMachine.some(p => p.id === c.parameterId))}
-              personnel={personnel}
-              onSaveBatch={addRunsBatch}
-              onClose={() => setShowDailyEntry(false)}
+          {showNewEntry && canEdit && (
+            <NewIQCEntryPopup
+              qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} personnel={personnel}
+              defaultMachineId={selectedMachineId} onSaveBatch={addRunsBatch} onClose={() => setShowNewEntry(false)}
             />
           )}
 
-          <p className="text-xs text-gray-400 mb-2">To add parameters/controls for this machine, set its protocol, or manage test code mappings, use Settings → Configure machines / IQC configuration.</p>
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs text-gray-400">Points on chart:</div>
+            <select value={pointsToShow} onChange={e => setPointsToShow(e.target.value)} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
+              <option value="7">Last 7 points</option>
+              <option value="20">Last 20 points</option>
+              <option value="30">Last 30 points</option>
+              <option value="all">All points</option>
+            </select>
+          </div>
 
-          <div className="flex gap-4 items-start">
-            {/* LEFT: parameter list */}
-            <div className="w-60 shrink-0 space-y-1">
-              {paramsForMachine.length === 0 && <Empty text="No parameters set up for this machine yet." />}
-              {paramsForMachine.map(param => {
-                const pControls = qcControls.filter(c => c.parameterId === param.id);
-                const pAllRuns = [];
-                pControls.forEach(ctrl => {
-                  const runsAsc = qcRuns.filter(r => r.controlId === ctrl.id)
-                    .map(r => ({ ...r, mean: ctrl.mean, sd: ctrl.sd }))
-                    .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
-                  pAllRuns.push(...evaluateControlSeries(runsAsc));
-                });
-                const pWithR4s = applyR4s(pAllRuns, pAllRuns);
-                const pWithR4sById = Object.fromEntries(pWithR4s.map(r => [r.id, r]));
-                const pOpenViolations = pWithR4s.filter(r => !r.authorized && r.violations.some(v => REJECT_RULES.includes(v))).length;
-                const levelStatus = pControls.map(ctrl => {
-                  const ctrlRuns = pAllRuns.filter(r => r.controlId === ctrl.id).map(r => pWithR4sById[r.id]);
-                  if (ctrlRuns.length === 0) return { level: ctrl.level, color: "#D8E5E1" };
-                  const hasReject = ctrlRuns.some(r => !r.authorized && r.violations.some(v => REJECT_RULES.includes(v)));
-                  const hasWarn = ctrlRuns.some(r => !r.authorized && r.violations.includes("1_2s"));
-                  return { level: ctrl.level, color: hasReject ? COLORS.red : hasWarn ? COLORS.amber : COLORS.teal };
-                });
-                const isSelected = selectedParamId === param.id;
-                return (
-                  <button key={param.id} onClick={() => setSelectedParamId(param.id)}
-                    className="w-full text-left px-3 py-2 rounded-md text-sm"
-                    style={{ background: isSelected ? COLORS.mint : "white", border: `1px solid ${isSelected ? COLORS.teal : "#E1EBE8"}`, color: isSelected ? COLORS.teal : COLORS.ink }}>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate">{param.name}</span>
-                      {pOpenViolations > 0 && <Badge color={COLORS.red}>{pOpenViolations}</Badge>}
-                    </div>
-                    {levelStatus.length > 0 && (
-                      <div className="flex items-center gap-1 mt-1">
-                        {levelStatus.map(ls => (
-                          <span key={ls.level} title={ls.level} style={{ width: 7, height: 7, borderRadius: "50%", background: ls.color, display: "inline-block" }} />
-                        ))}
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* RIGHT: detail panel for the selected parameter — all levels' charts at once */}
-            <div className="flex-1 min-w-0">
-              {(() => {
-                const param = paramsForMachine.find(p => p.id === selectedParamId);
-                if (!param) return <Empty text="Select a parameter on the left to view its Levey-Jennings charts." />;
-
-                const controls = qcControls.filter(c => c.parameterId === param.id);
-                const perControlEvald = {};
-                const allRuns = [];
-                controls.forEach(ctrl => {
-                  const runsAsc = qcRuns.filter(r => r.controlId === ctrl.id)
-                    .map(r => ({ ...r, mean: ctrl.mean, sd: ctrl.sd }))
-                    .sort((a, b) => (a.date + (a.time || "")).localeCompare(b.date + (b.time || "")));
-                  const evald = evaluateControlSeries(runsAsc);
-                  perControlEvald[ctrl.id] = evald;
-                  allRuns.push(...evald);
-                });
-                const withR4s = applyR4s(allRuns, allRuns);
-                const withR4sById = Object.fromEntries(withR4s.map(r => [r.id, r]));
-                const allParamRunsDesc = allRuns.map(r => withR4sById[r.id])
-                  .sort((a, b) => (b.date + (b.time || "")).localeCompare(a.date + (a.time || "")));
-                const openViolations = allParamRunsDesc.filter(r => !r.authorized && r.violations.some(v => REJECT_RULES.includes(v))).length;
-
-                return (
-                  <div className="bg-white rounded-lg border p-4" style={{ borderColor: "#E1EBE8" }}>
-                    <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold" style={{ color: COLORS.navy }}>{param.name}</span>
-                        <span className="text-xs text-gray-400">{param.unit}</span>
-                        {openViolations > 0 && <Badge color={COLORS.red}><ShieldAlert size={11} className="inline -mt-0.5 mr-1" />{openViolations} unauthorized violation{openViolations !== 1 ? "s" : ""}</Badge>}
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <select value={pointsToShow} onChange={e => setPointsToShow(e.target.value)} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
-                          <option value="7">Last 7 points</option>
-                          <option value="20">Last 20 points</option>
-                          <option value="30">Last 30 points</option>
-                          <option value="all">All points</option>
-                        </select>
-                        <button onClick={() => setShowValuesTable(v => !v)} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-                          {showValuesTable ? "Hide" : "Show"} values
-                        </button>
-                        <button onClick={() => printParameterLJReport(param, controls, perControlEvald, withR4sById)} className="text-xs px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-                          Print
-                        </button>
-                      </div>
-                    </div>
-
-                    {controls.length === 0 && <div className="text-xs text-gray-400 py-4 text-center border rounded-md" style={{ borderColor: "#EEF3F1" }}>No control levels defined for this parameter yet.</div>}
-                    {controls.map(ctrl => {
-                      const evaldRuns = (perControlEvald[ctrl.id] || []).map(r => ({ ...r, ...withR4sById[r.id] }));
-                      const sliced = pointsToShow === "all" ? evaldRuns : evaldRuns.slice(-Number(pointsToShow));
-                      return (
-                        <div key={ctrl.id} className="mb-4">
-                          <div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>{ctrl.level} — Lot {ctrl.lotNumber} · Mean {ctrl.mean} · SD {ctrl.sd}</div>
-                          {sliced.length > 0 ? <LJChart runs={sliced} mean={ctrl.mean} sd={ctrl.sd} /> : (
-                            <div className="text-xs text-gray-400 py-6 text-center border rounded-md" style={{ borderColor: "#EEF3F1" }}>No IQC results logged for this level yet.</div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {showValuesTable && (
-                      <div className="border rounded-md divide-y mb-4" style={{ borderColor: "#EEF3F1" }}>
-                        {allParamRunsDesc.length === 0 && <div className="text-xs text-gray-400 px-3 py-3">No results logged yet.</div>}
-                        {allParamRunsDesc.map(r => {
-                          const ctrl = controls.find(c => c.id === r.controlId);
-                          return (
-                            <div key={r.id} className="flex items-center gap-2 px-3 py-2 flex-wrap">
-                              <span className="text-xs text-gray-400 w-24">{r.date}{r.time ? ` ${r.time}` : ""}</span>
-                              <span className="text-xs w-28">{ctrl?.level}</span>
-                              <span className="text-xs font-medium w-16">{r.value}</span>
-                              <span className="text-xs text-gray-400 w-16">z={r.z.toFixed(2)}</span>
-                              <span className="text-xs text-gray-400 w-24">{r.operator}</span>
-                              <div className="flex gap-1 flex-wrap">
-                                {r.violations.map(v => (
-                                  <Badge key={v} color={REJECT_RULES.includes(v) ? COLORS.red : COLORS.amber}>{RULE_LABEL[v] || v}</Badge>
-                                ))}
-                                {r.violations.length === 0 && <Badge color={COLORS.teal}>In control</Badge>}
-                              </div>
-                              <div className="ml-auto flex items-center gap-2">
-                                <AuthorizeControl run={r} currentUser={currentUser} canAuthorize={canAuthorizeIQC} onAuthorize={() => authorizeQcRunAction(r.id)} />
-                                {canDeleteRecords && <button onClick={() => removeRun(r.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>}
-                              </div>
-                              {r.comment && <div className="w-full text-xs text-gray-400 pl-24">{r.comment}</div>}
+          <div className="bg-white rounded-lg border overflow-x-auto" style={{ borderColor: "#E1EBE8" }}>
+            {iqcTableRows.length === 0 ? (
+              <Empty text="No IQC results match these filters yet." />
+            ) : (
+              <table className="w-full text-xs" style={{ minWidth: 900 }}>
+                <thead>
+                  <tr className="border-b" style={{ borderColor: "#E1EBE8" }}>
+                    {["Analyte", "Level", "QC value", "Unit", "QC status", "Westgard rule", "Date", "", ""].map(h => (
+                      <th key={h} className="text-left font-medium text-gray-400 px-3 py-2 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {iqcTableRows.map(r => {
+                    const hasReject = r.violations.some(v => REJECT_RULES.includes(v));
+                    const hasWarn = r.violations.includes("1_2s");
+                    const statusColor = hasReject ? COLORS.red : hasWarn ? COLORS.amber : COLORS.teal;
+                    const statusLabel = hasReject ? "Reject" : hasWarn ? "Warning" : "In control";
+                    const showChartHere = expandedControlId === r.ctrl.id;
+                    const chartRuns = evaldByControlId[r.ctrl.id] || [];
+                    const sliced = pointsToShow === "all" ? chartRuns : chartRuns.slice(-Number(pointsToShow));
+                    return (
+                      <React.Fragment key={r.id}>
+                        <tr className="border-b" style={{ borderColor: "#EEF3F1" }}>
+                          <td className="px-3 py-2">{r.param?.name || "—"}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">{r.ctrl.level}{r.ctrl.materialName ? <div className="text-gray-400">{r.ctrl.materialName}</div> : null}</td>
+                          <td className="px-3 py-2">{r.value} <span className="text-gray-400">(z={r.z.toFixed(2)})</span></td>
+                          <td className="px-3 py-2 text-gray-500">{r.unit || r.param?.unit || "—"}</td>
+                          <td className="px-3 py-2"><Badge color={statusColor}>{statusLabel}</Badge></td>
+                          <td className="px-3 py-2">
+                            <div className="flex gap-1 flex-wrap">
+                              {r.violations.length === 0 ? <span className="text-gray-300">—</span> : r.violations.map(v => (
+                                <Badge key={v} color={REJECT_RULES.includes(v) ? COLORS.red : COLORS.amber}>{RULE_LABEL[v] || v}</Badge>
+                              ))}
                             </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    <div className="pt-3 border-t" style={{ borderColor: "#EEF3F1" }}>
-                      <div className="text-xs font-medium mb-2" style={{ color: COLORS.navy }}>Control levels / lots</div>
-                      <div className="border rounded-md divide-y mb-3" style={{ borderColor: "#EEF3F1" }}>
-                        {controls.length === 0 && <div className="text-xs text-gray-400 px-3 py-2">No control levels defined yet — set these up from Settings → IQC configuration.</div>}
-                        {controls.map(c => (
-                          <div key={c.id} className="flex items-center gap-3 px-3 py-1.5 text-xs">
-                            <span className="font-medium w-32">{c.level}</span>
-                            <span className="text-gray-500 flex-1">Lot {c.lotNumber} · Mean {c.mean} · SD {c.sd}</span>
-                            {c.expiryDate && (
-                              <Badge color={c.expiryDate < todayISO() ? COLORS.red : (c.expiryDate <= daysFromNowISO(30) ? COLORS.amber : "#9AA5A3")}>
-                                {c.expiryDate < todayISO() ? "Expired" : "Expires"} {c.expiryDate}
-                              </Badge>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="text-xs font-medium" style={{ color: COLORS.navy }}>Add a result</div>
-                        {controls.length > 0 && canEdit && (
-                          <button onClick={() => setRunFormFor(runFormFor === param.id ? null : param.id)} className="text-xs flex items-center gap-1 px-2 py-1 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
-                            <Plus size={12} /> Add IQC result
-                          </button>
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-gray-500">{r.date}{r.time ? ` ${r.time}` : ""}</td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <AuthorizeControl run={r} currentUser={currentUser} canAuthorize={canAuthorizeIQC} onAuthorize={() => authorizeQcRunAction(r.id)} />
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap">
+                            <div className="flex items-center gap-2">
+                              <button onClick={() => setExpandedControlId(showChartHere ? null : r.ctrl.id)} className="text-gray-400 hover:text-teal-600" style={{ color: COLORS.teal }} title="View Levey-Jennings chart">
+                                <Activity size={14} />
+                              </button>
+                              {canDeleteRecords && <button onClick={() => removeRun(r.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>}
+                            </div>
+                          </td>
+                        </tr>
+                        {showChartHere && (
+                          <tr className="border-b" style={{ borderColor: "#EEF3F1" }}>
+                            <td colSpan={9} className="px-3 py-3">
+                              <div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>
+                                {r.param?.name} — {r.ctrl.level}{r.ctrl.materialName ? ` · ${r.ctrl.materialName}` : ""} · Lot {r.ctrl.lotNumber} · Mean {r.ctrl.mean} · SD {r.ctrl.sd}
+                              </div>
+                              {sliced.length > 0 ? <LJChart runs={sliced} mean={r.ctrl.mean} sd={r.ctrl.sd} /> : (
+                                <div className="text-xs text-gray-400 py-6 text-center border rounded-md" style={{ borderColor: "#EEF3F1" }}>No points to chart yet.</div>
+                              )}
+                            </td>
+                          </tr>
                         )}
-                      </div>
-                      {runFormFor === param.id && canEdit && <RunForm controls={controls} personnel={personnel} onCancel={() => setRunFormFor(null)} onSave={(controlId, draft) => addRun(controlId, draft)} />}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            )}
           </div>
         </div>
       )}
@@ -4049,27 +3940,45 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
   );
 }
 
-function DailyIQCEntry({ parameters, controls, personnel, onSaveBatch, onClose }) {
+const COMMON_QC_UNITS = ["mg/dL", "mmol/L", "g/dL", "IU/L", "U/L", "µg/dL", "ng/mL", "pg/mL", "mIU/L", "IU/mL", "10⁹/L", "10¹²/L", "%", "fL", "pg", "s", "µmol/L"];
+
+/** "New entry" popup: pick Machine → QC material → Level → Date, then every analyte with a matching control (same machine/material/level) is listed at once for batch entry — one worksheet per QC material/level combination, rather than mixing every level of every analyte together. */
+function NewIQCEntryPopup({ qcMachines, qcParameters, qcControls, personnel, defaultMachineId, onSaveBatch, onClose }) {
+  const [machineId, setMachineId] = useState(defaultMachineId || "");
+  const [materialName, setMaterialName] = useState("");
+  const [level, setLevel] = useState("");
   const [date, setDate] = useState(todayISO());
   const [time, setTime] = useState("");
   const [operator, setOperator] = useState("");
-  const [values, setValues] = useState({}); // controlId -> { value, comment }
+  const [values, setValues] = useState({}); // controlId -> { value, unit, unitOther, comment }
   const [savedMsg, setSavedMsg] = useState("");
 
-  const paramsWithControls = parameters
-    .map(p => ({ param: p, controls: controls.filter(c => c.parameterId === p.id) }))
-    .filter(x => x.controls.length > 0);
+  const paramsForMachine = qcParameters.filter(p => p.machineId === machineId);
+  const controlsForMachine = qcControls.filter(c => paramsForMachine.some(p => p.id === c.parameterId));
+  const materialOptions = [...new Set(controlsForMachine.map(c => c.materialName).filter(Boolean))].sort();
+  const levelOptions = [...new Set(controlsForMachine.filter(c => !materialName || c.materialName === materialName).map(c => c.level))];
+
+  const matchingControls = controlsForMachine
+    .filter(c => c.materialName === materialName && c.level === level)
+    .map(c => ({ control: c, param: paramsForMachine.find(p => p.id === c.parameterId) }))
+    .filter(x => x.param);
 
   const setVal = (controlId, patch) => setValues(v => ({ ...v, [controlId]: { ...v[controlId], ...patch } }));
+  const unitFor = (controlId, defaultUnit) => {
+    const v = values[controlId];
+    if (!v || !v.unit) return defaultUnit || "";
+    return v.unit === "__other__" ? (v.unitOther || "") : v.unit;
+  };
 
   const filledCount = Object.values(values).filter(v => v?.value !== undefined && v.value !== "").length;
 
   const handleSave = () => {
     const entries = [];
-    controls.forEach(c => {
-      const v = values[c.id];
+    matchingControls.forEach(({ control, param }) => {
+      const v = values[control.id];
       if (v && v.value !== undefined && v.value !== "") {
-        entries.push({ controlId: c.id, draft: { date, time, operator, value: parseFloat(v.value), comment: v.comment || "" } });
+        const unit = unitFor(control.id, param.unit);
+        entries.push({ controlId: control.id, draft: { date, time, operator, value: parseFloat(v.value), unit, comment: v.comment || "" } });
       }
     });
     if (entries.length === 0) return;
@@ -4079,62 +3988,92 @@ function DailyIQCEntry({ parameters, controls, personnel, onSaveBatch, onClose }
   };
 
   return (
-    <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: COLORS.teal, borderWidth: 1.5 }}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="text-sm font-semibold flex items-center gap-2" style={{ color: COLORS.navy }}>
-          <Activity size={15} color={COLORS.teal} /> Daily IQC worksheet
-        </div>
-        <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={15} /></button>
-      </div>
-
-      <div className="grid grid-cols-3 gap-3 mb-4">
-        <Field label="Date"><input type="date" className={inputCls} style={inputStyle} value={date} onChange={e => setDate(e.target.value)} /></Field>
-        <Field label="Time (optional)"><input type="time" className={inputCls} style={inputStyle} value={time} onChange={e => setTime(e.target.value)} /></Field>
-        <Field label="Operator">
-          <select className={inputCls} style={inputStyle} value={operator} onChange={e => setOperator(e.target.value)}>
-            <option value="">Select…</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-          </select>
-        </Field>
-      </div>
-
-      {paramsWithControls.length === 0 ? (
-        <Empty text="No parameters with control levels yet — set those up first, then daily entry will list them here." />
-      ) : (
-        <div className="border rounded-md overflow-hidden mb-3" style={{ borderColor: "#EEF3F1" }}>
-          <div className="grid text-xs font-medium px-3 py-2" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 0.8fr 1.4fr", background: COLORS.mint, color: COLORS.navy }}>
-            <div>Parameter</div><div>Level / Lot</div><div>Target (mean ± SD)</div><div>Value</div><div>Comment (optional)</div>
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg border max-w-3xl w-full max-h-[85vh] overflow-y-auto p-5" style={{ borderColor: "#E1EBE8" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-semibold flex items-center gap-2" style={{ color: COLORS.navy }}>
+            <Activity size={15} color={COLORS.teal} /> New IQC entry
           </div>
-          {paramsWithControls.map(({ param, controls: paramControls }) => (
-            paramControls.map((c, i) => {
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+        </div>
+
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <Field label="Machine">
+            <select className={inputCls} style={inputStyle} value={machineId} onChange={e => { setMachineId(e.target.value); setMaterialName(""); setLevel(""); }}>
+              <option value="">Select…</option>{qcMachines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </Field>
+          <Field label="QC material">
+            <select className={inputCls} style={inputStyle} value={materialName} onChange={e => { setMaterialName(e.target.value); setLevel(""); }} disabled={!machineId}>
+              <option value="">Select…</option>{materialOptions.map(m => <option key={m}>{m}</option>)}
+            </select>
+          </Field>
+          <Field label="Level">
+            <select className={inputCls} style={inputStyle} value={level} onChange={e => setLevel(e.target.value)} disabled={!materialName}>
+              <option value="">Select…</option>{levelOptions.map(l => <option key={l}>{l}</option>)}
+            </select>
+          </Field>
+          <Field label="Date"><input type="date" className={inputCls} style={inputStyle} value={date} onChange={e => setDate(e.target.value)} /></Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <Field label="Time (optional)"><input type="time" className={inputCls} style={inputStyle} value={time} onChange={e => setTime(e.target.value)} /></Field>
+          <Field label="Operator">
+            <select className={inputCls} style={inputStyle} value={operator} onChange={e => setOperator(e.target.value)}>
+              <option value="">Select…</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+            </select>
+          </Field>
+        </div>
+
+        {!machineId || !materialName || !level ? (
+          <Empty text="Pick a machine, QC material, and level above to list its analytes." />
+        ) : matchingControls.length === 0 ? (
+          <Empty text="No analytes have a control set up for this machine/material/level combination yet — add one from Settings → IQC configuration." />
+        ) : (
+          <div className="border rounded-md overflow-hidden mb-3" style={{ borderColor: "#EEF3F1" }}>
+            <div className="grid text-xs font-medium px-3 py-2" style={{ gridTemplateColumns: "1.3fr 1fr 0.9fr 1fr 1.2fr", background: COLORS.mint, color: COLORS.navy }}>
+              <div>Analyte</div><div>Target (mean ± SD)</div><div>Value</div><div>Unit</div><div>Comment (optional)</div>
+            </div>
+            {matchingControls.map(({ control: c, param }) => {
               const v = values[c.id]?.value ?? "";
               const z = v !== "" ? zScore(parseFloat(v), c.mean, c.sd) : null;
+              const unitSel = values[c.id]?.unit ?? (param.unit || "__other__");
               return (
-                <div key={c.id} className="grid items-center px-3 py-1.5 border-t text-xs" style={{ gridTemplateColumns: "1.4fr 1fr 1fr 0.8fr 1.4fr", borderColor: "#EEF3F1" }}>
-                  <div>{i === 0 ? <span className="font-medium">{param.name}</span> : ""}<span className="text-gray-400 ml-1">{i === 0 ? param.unit : ""}</span></div>
-                  <div>{c.level} <span className="text-gray-400">(Lot {c.lotNumber})</span></div>
+                <div key={c.id} className="grid items-center px-3 py-1.5 border-t text-xs" style={{ gridTemplateColumns: "1.3fr 1fr 0.9fr 1fr 1.2fr", borderColor: "#EEF3F1" }}>
+                  <div className="font-medium">{param.name}</div>
                   <div className="text-gray-500">{c.mean} ± {c.sd}</div>
                   <div>
                     <input type="number" step="any" value={v} onChange={e => setVal(c.id, { value: e.target.value })}
                       placeholder="—" className="w-full border rounded-md px-2 py-1 text-xs" style={{ borderColor: z !== null && Math.abs(z) > 2 ? COLORS.red : "#D8E5E1" }} />
                     {z !== null && <div className="text-[10px] mt-0.5" style={{ color: Math.abs(z) > 2 ? COLORS.red : COLORS.teal }}>z={z.toFixed(2)}</div>}
                   </div>
+                  <div>
+                    <select value={unitSel} onChange={e => setVal(c.id, { unit: e.target.value })} className="w-full border rounded-md px-2 py-1 text-xs mb-1" style={{ borderColor: "#D8E5E1" }}>
+                      {param.unit && <option value={param.unit}>{param.unit}</option>}
+                      {COMMON_QC_UNITS.filter(u => u !== param.unit).map(u => <option key={u} value={u}>{u}</option>)}
+                      <option value="__other__">Other…</option>
+                    </select>
+                    {unitSel === "__other__" && (
+                      <input value={values[c.id]?.unitOther || ""} onChange={e => setVal(c.id, { unitOther: e.target.value })}
+                        placeholder="Type unit" className="w-full border rounded-md px-2 py-1 text-xs" style={{ borderColor: "#D8E5E1" }} />
+                    )}
+                  </div>
                   <input value={values[c.id]?.comment || ""} onChange={e => setVal(c.id, { comment: e.target.value })}
                     placeholder="" className="w-full border rounded-md px-2 py-1 text-xs" style={{ borderColor: "#D8E5E1" }} />
                 </div>
               );
-            })
-          ))}
-        </div>
-      )}
+            })}
+          </div>
+        )}
 
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-gray-400">{savedMsg || (filledCount > 0 ? `${filledCount} value(s) entered` : "Enter values for as many rows as ran today")}</span>
-        <div className="flex gap-2">
-          <button onClick={onClose} className="text-sm px-3 py-1.5 text-gray-500">Close</button>
-          <button onClick={handleSave} disabled={filledCount === 0}
-            className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-40" style={{ background: COLORS.teal }}>
-            <Save size={14} /> Save all entered results
-          </button>
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400">{savedMsg || (filledCount > 0 ? `${filledCount} value(s) entered` : "Enter values for as many analytes as ran today")}</span>
+          <div className="flex gap-2">
+            <button onClick={onClose} className="text-sm px-3 py-1.5 text-gray-500">Close</button>
+            <button onClick={handleSave} disabled={filledCount === 0}
+              className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-40" style={{ background: COLORS.teal }}>
+              <Save size={14} /> Save all entered results
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -4460,6 +4399,7 @@ function ParameterForm({ onSave, onCancel }) {
 }
 
 function ControlForm({ onSave, onCancel }) {
+  const [materialName, setMaterialName] = useState("");
   const [level, setLevel] = useState(CONTROL_LEVELS[0]);
   const [lotNumber, setLotNumber] = useState("");
   const [mean, setMean] = useState("");
@@ -4467,7 +4407,8 @@ function ControlForm({ onSave, onCancel }) {
   const [expiryDate, setExpiryDate] = useState("");
   return (
     <div className="mb-3 p-3 rounded-md" style={{ background: COLORS.mint }}>
-      <div className="grid grid-cols-5 gap-2 mb-2">
+      <div className="grid grid-cols-6 gap-2 mb-2">
+        <input value={materialName} onChange={e => setMaterialName(e.target.value)} placeholder="QC material (e.g. Liquichek)" className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
         <select value={level} onChange={e => setLevel(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
           {CONTROL_LEVELS.map(l => <option key={l}>{l}</option>)}
         </select>
@@ -4478,42 +4419,8 @@ function ControlForm({ onSave, onCancel }) {
       </div>
       <div className="flex justify-end gap-2">
         <button onClick={onCancel} className="text-xs px-3 py-1 rounded-md text-gray-500">Cancel</button>
-        <button onClick={() => lotNumber && mean !== "" && sd !== "" && onSave({ level, lotNumber, mean: parseFloat(mean), sd: parseFloat(sd), expiryDate })}
+        <button onClick={() => lotNumber && mean !== "" && sd !== "" && onSave({ materialName, level, lotNumber, mean: parseFloat(mean), sd: parseFloat(sd), expiryDate })}
           className="text-xs px-3 py-1 rounded-md text-white" style={{ background: COLORS.teal }}>Save level</button>
-      </div>
-    </div>
-  );
-}
-
-function RunForm({ controls, personnel, onSave, onCancel }) {
-  const [controlId, setControlId] = useState(controls[0]?.id || "");
-  const [date, setDate] = useState(todayISO());
-  const [time, setTime] = useState("");
-  const [value, setValue] = useState("");
-  const [operator, setOperator] = useState("");
-  const [comment, setComment] = useState("");
-  const ctrl = controls.find(c => c.id === controlId);
-  const previewZ = ctrl && value !== "" ? zScore(parseFloat(value), ctrl.mean, ctrl.sd) : null;
-
-  return (
-    <div className="mb-3 p-3 rounded-md" style={{ background: COLORS.mint }}>
-      <div className="grid grid-cols-5 gap-2 mb-2">
-        <select value={controlId} onChange={e => setControlId(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
-          {controls.map(c => <option key={c.id} value={c.id}>{c.level} (Lot {c.lotNumber})</option>)}
-        </select>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
-        <input type="time" value={time} onChange={e => setTime(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
-        <input type="number" step="any" value={value} onChange={e => setValue(e.target.value)} placeholder="Value" className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
-        <select value={operator} onChange={e => setOperator(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
-          <option value="">Operator…</option>{personnel.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-        </select>
-      </div>
-      {previewZ !== null && <div className="text-xs mb-2" style={{ color: Math.abs(previewZ) > 2 ? COLORS.red : COLORS.teal }}>z-score preview: {previewZ.toFixed(2)}</div>}
-      <input value={comment} onChange={e => setComment(e.target.value)} placeholder="Comment (optional)" className="w-full text-xs border rounded-md px-2 py-1.5 mb-2" style={{ borderColor: "#D8E5E1" }} />
-      <div className="flex justify-end gap-2">
-        <button onClick={onCancel} className="text-xs px-3 py-1 rounded-md text-gray-500">Cancel</button>
-        <button onClick={() => controlId && value !== "" && onSave(controlId, { date, time, value: parseFloat(value), operator, comment })}
-          className="text-xs px-3 py-1 rounded-md text-white" style={{ background: COLORS.teal }}>Save IQC result</button>
       </div>
     </div>
   );
@@ -6510,7 +6417,7 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
                         <div className="mt-1.5 pl-3 space-y-1">
                           {controlsForParam.map(c => (
                             <div key={c.id} className="flex items-center justify-between text-xs text-gray-500">
-                              <span>{c.level} · lot {c.lotNumber} · mean {c.mean} SD {c.sd}</span>
+                              <span>{c.materialName ? c.materialName + " · " : ""}{c.level} · lot {c.lotNumber} · mean {c.mean} SD {c.sd}</span>
                               {canDeleteRecords && <button onClick={() => removeControl(c.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={11} /></button>}
                             </div>
                           ))}

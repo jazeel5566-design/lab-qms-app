@@ -409,11 +409,13 @@ export const testCodeMappingToDb = (m) => ({
 
 export const controlFromDb = (row) => ({
   id: row.id, parameterId: row.parameter_id, level: row.level, lotNumber: row.lot_number || "",
+  materialName: row.material_name || "",
   mean: Number(row.mean), sd: Number(row.sd), expiryDate: row.expiry_date || "",
   laboratoryId: row.laboratory_id,
 });
 export const controlToDb = (c) => ({
   parameter_id: c.parameterId, level: c.level, lot_number: c.lotNumber || null,
+  material_name: c.materialName || null,
   mean: c.mean, sd: c.sd, expiry_date: c.expiryDate || null,
   laboratory_id: c.laboratoryId,
 });
@@ -425,6 +427,7 @@ export const runFromDb = (row, personnel) => ({
   date: row.date,
   time: row.time || "",
   value: Number(row.value),
+  unit: row.unit || "",
   operator: idToName(personnel, row.operator),
   authorized: row.authorized,
   authorizedByName: idToName(personnel, row.authorized_by),
@@ -438,6 +441,7 @@ export const runToDb = (r, personnel) => ({
   date: r.date,
   time: r.time || null,
   value: r.value,
+  unit: r.unit || null,
   operator: nameToId(personnel, r.operator),
   comment: r.comment || null,
   laboratory_id: r.laboratoryId,
