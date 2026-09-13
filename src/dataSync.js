@@ -411,12 +411,22 @@ export const controlFromDb = (row) => ({
   id: row.id, parameterId: row.parameter_id, level: row.level, lotNumber: row.lot_number || "",
   materialName: row.material_name || "",
   mean: Number(row.mean), sd: Number(row.sd), expiryDate: row.expiry_date || "",
+  cvPercent: row.cv_percent !== null && row.cv_percent !== undefined ? Number(row.cv_percent) : "",
+  rangeLow: row.range_low !== null && row.range_low !== undefined ? Number(row.range_low) : "",
+  rangeHigh: row.range_high !== null && row.range_high !== undefined ? Number(row.range_high) : "",
+  peerGroupN: row.peer_group_n !== null && row.peer_group_n !== undefined ? Number(row.peer_group_n) : "",
+  reagentLot: row.reagent_lot || "",
   laboratoryId: row.laboratory_id,
 });
 export const controlToDb = (c) => ({
   parameter_id: c.parameterId, level: c.level, lot_number: c.lotNumber || null,
   material_name: c.materialName || null,
   mean: c.mean, sd: c.sd, expiry_date: c.expiryDate || null,
+  cv_percent: c.cvPercent === "" || c.cvPercent === undefined ? null : c.cvPercent,
+  range_low: c.rangeLow === "" || c.rangeLow === undefined ? null : c.rangeLow,
+  range_high: c.rangeHigh === "" || c.rangeHigh === undefined ? null : c.rangeHigh,
+  peer_group_n: c.peerGroupN === "" || c.peerGroupN === undefined ? null : c.peerGroupN,
+  reagent_lot: c.reagentLot || null,
   laboratory_id: c.laboratoryId,
 });
 

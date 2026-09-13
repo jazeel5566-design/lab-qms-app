@@ -3898,6 +3898,9 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                               <div className="flex items-center justify-between mb-1">
                                 <div className="text-xs font-medium" style={{ color: COLORS.navy }}>
                                   {r.param?.name} — {r.ctrl.level}{r.ctrl.materialName ? ` · ${r.ctrl.materialName}` : ""} · Lot {r.ctrl.lotNumber} · Mean {r.ctrl.mean} · SD {r.ctrl.sd}
+                                  {r.ctrl.cvPercent !== "" && ` · CV ${r.ctrl.cvPercent}%`}
+                                  {(r.ctrl.rangeLow !== "" || r.ctrl.rangeHigh !== "") && ` · Range ${r.ctrl.rangeLow || "?"}–${r.ctrl.rangeHigh || "?"}`}
+                                  {r.ctrl.peerGroupN !== "" && ` · N=${r.ctrl.peerGroupN}`}
                                 </div>
                                 <select value={pointsToShow} onChange={e => setPointsToShow(e.target.value)} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
                                   <option value="7">Last 7 points</option>
@@ -4083,7 +4086,8 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
   const [level, setLevel] = useState(CONTROL_LEVELS[0]);
   const [lotNumber, setLotNumber] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
-  const [values, setValues] = useState({}); // parameterId -> { mean, sd }
+  const [reagentLot, setReagentLot] = useState("");
+  const [values, setValues] = useState({}); // parameterId -> { mean, sd, cvPercent, rangeLow, rangeHigh, peerGroupN }
   const [savedEntries, setSavedEntries] = useState(null); // set once saved, drives step 2
   const [savedMsg, setSavedMsg] = useState("");
   const [copyToIds, setCopyToIds] = useState([]);
@@ -4093,6 +4097,10 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
   const paramsForMachine = qcParameters.filter(p => p.machineId === machineId);
   const setVal = (paramId, patch) => setValues(v => ({ ...v, [paramId]: { ...v[paramId], ...patch } }));
   const filledCount = Object.values(values).filter(v => v?.mean !== undefined && v.mean !== "" && v?.sd !== undefined && v.sd !== "").length;
+  const fillSdFromCv = (paramId, mean) => {
+    const cv = values[paramId]?.cvPercent;
+    if (cv !== undefined && cv !== "" && mean) setVal(paramId, { sd: ((parseFloat(cv) / 100) * parseFloat(mean)).toFixed(4) });
+  };
 
   const handleSave = () => {
     if (!materialName.trim() || !lotNumber.trim()) return;
@@ -4100,12 +4108,23 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
     paramsForMachine.forEach(p => {
       const v = values[p.id];
       if (v && v.mean !== undefined && v.mean !== "" && v.sd !== undefined && v.sd !== "") {
-        entries.push({ id: uid(), parameterId: p.id, materialName: materialName.trim(), level, lotNumber: lotNumber.trim(), mean: parseFloat(v.mean), sd: parseFloat(v.sd), expiryDate, laboratoryId: activeLaboratoryId });
+        entries.push({
+          id: uid(), parameterId: p.id, materialName: materialName.trim(), level, lotNumber: lotNumber.trim(),
+          mean: parseFloat(v.mean), sd: parseFloat(v.sd), expiryDate, reagentLot: reagentLot.trim(),
+          cvPercent: v.cvPercent === undefined || v.cvPercent === "" ? "" : parseFloat(v.cvPercent),
+          rangeLow: v.rangeLow === undefined || v.rangeLow === "" ? "" : parseFloat(v.rangeLow),
+          rangeHigh: v.rangeHigh === undefined || v.rangeHigh === "" ? "" : parseFloat(v.rangeHigh),
+          peerGroupN: v.peerGroupN === undefined || v.peerGroupN === "" ? "" : parseInt(v.peerGroupN, 10),
+          laboratoryId: activeLaboratoryId,
+        });
       }
     });
     if (entries.length === 0) return;
     updateQcControls([...entries, ...qcControls]);
-    setSavedEntries(entries.map(e => ({ paramName: paramsForMachine.find(p => p.id === e.parameterId)?.name, mean: e.mean, sd: e.sd })));
+    setSavedEntries(entries.map(e => ({
+      paramName: paramsForMachine.find(p => p.id === e.parameterId)?.name, mean: e.mean, sd: e.sd,
+      cvPercent: e.cvPercent, rangeLow: e.rangeLow, rangeHigh: e.rangeHigh, peerGroupN: e.peerGroupN,
+    })));
     setSavedMsg(`Saved ${entries.length} analyte(s) for ${materialName} — ${level}, lot ${lotNumber}, on ${qcMachines.find(m => m.id === machineId)?.name}.`);
   };
 
@@ -4122,7 +4141,12 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
         const matchParam = targetParams.find(p => p.name.trim().toLowerCase() === entry.paramName.trim().toLowerCase());
         if (!matchParam) return;
         const alreadyExists = qcControls.some(c => c.parameterId === matchParam.id && c.materialName === materialName.trim() && c.level === level && c.lotNumber === lotNumber.trim());
-        if (!alreadyExists) copies.push({ id: uid(), parameterId: matchParam.id, materialName: materialName.trim(), level, lotNumber: lotNumber.trim(), mean: entry.mean, sd: entry.sd, expiryDate, laboratoryId: activeLaboratoryId });
+        if (!alreadyExists) copies.push({
+          id: uid(), parameterId: matchParam.id, materialName: materialName.trim(), level, lotNumber: lotNumber.trim(),
+          mean: entry.mean, sd: entry.sd, expiryDate, reagentLot: reagentLot.trim(),
+          cvPercent: entry.cvPercent, rangeLow: entry.rangeLow, rangeHigh: entry.rangeHigh, peerGroupN: entry.peerGroupN,
+          laboratoryId: activeLaboratoryId,
+        });
       });
     });
     if (copies.length > 0) updateQcControls([...copies, ...qcControls]);
@@ -4132,16 +4156,16 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
 
   return (
     <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div className="bg-white rounded-lg border max-w-3xl w-full max-h-[85vh] overflow-y-auto p-5" style={{ borderColor: "#E1EBE8" }} onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-lg border max-w-4xl w-full max-h-[85vh] overflow-y-auto p-5" style={{ borderColor: "#E1EBE8" }} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <div className="text-sm font-semibold flex items-center gap-2" style={{ color: COLORS.navy }}>
             <FlaskConical size={15} color={COLORS.teal} /> Receive QC lot
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
         </div>
-        <p className="text-xs text-gray-500 mb-3">Enter the manufacturer's assigned mean/SD for each analyte this material covers — this creates the control level(s) results get checked against, separate from logging an actual result.</p>
+        <p className="text-xs text-gray-500 mb-3">Enter the values from the manufacturer's value assignment sheet / certificate of analysis for each analyte this material covers — this creates the control level(s) results get checked against, separate from logging an actual result.</p>
 
-        <div className="grid grid-cols-4 gap-3 mb-4">
+        <div className="grid grid-cols-4 gap-3 mb-3">
           <Field label="Machine">
             <select className={inputCls} style={inputStyle} value={machineId} onChange={e => { setMachineId(e.target.value); setValues({}); setSavedEntries(null); setSavedMsg(""); }}>
               <option value="">Select…</option>{qcMachines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
@@ -4158,7 +4182,10 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
           </Field>
           <Field label="Lot number"><input className={inputCls} style={inputStyle} value={lotNumber} onChange={e => setLotNumber(e.target.value)} /></Field>
         </div>
-        <Field label="Expiry date (optional)"><input type="date" className={inputCls} style={{ ...inputStyle, maxWidth: 200 }} value={expiryDate} onChange={e => setExpiryDate(e.target.value)} /></Field>
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <Field label="Expiry date (optional)"><input type="date" className={inputCls} style={inputStyle} value={expiryDate} onChange={e => setExpiryDate(e.target.value)} /></Field>
+          <Field label="Reagent lot (optional)"><input className={inputCls} style={inputStyle} value={reagentLot} onChange={e => setReagentLot(e.target.value)} placeholder="Value assignment can shift when this changes" /></Field>
+        </div>
 
         {!machineId ? (
           <Empty text="Pick a machine above to list its analytes." />
@@ -4167,17 +4194,26 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
         ) : paramsForMachine.length === 0 ? (
           <Empty text="No parameters set up for this machine yet — add some from Settings → IQC configuration." />
         ) : (
-          <div className="border rounded-md overflow-hidden mb-3" style={{ borderColor: "#EEF3F1" }}>
-            <div className="grid text-xs font-medium px-3 py-2" style={{ gridTemplateColumns: "1.4fr 1fr 1fr", background: COLORS.mint, color: COLORS.navy }}>
-              <div>Analyte</div><div>Mean</div><div>SD</div>
+          <div className="border rounded-md overflow-hidden mb-3 overflow-x-auto" style={{ borderColor: "#EEF3F1" }}>
+            <div className="grid text-xs font-medium px-3 py-2" style={{ gridTemplateColumns: "1.3fr 0.8fr 0.8fr 0.8fr 0.7fr 0.7fr 0.6fr", background: COLORS.mint, color: COLORS.navy, minWidth: 700 }}>
+              <div>Analyte</div><div>Mean</div><div>SD</div><div>CV%</div><div>Range low</div><div>Range high</div><div>Peer N</div>
             </div>
             {paramsForMachine.map(p => (
-              <div key={p.id} className="grid items-center px-3 py-1.5 border-t text-xs" style={{ gridTemplateColumns: "1.4fr 1fr 1fr", borderColor: "#EEF3F1" }}>
+              <div key={p.id} className="grid items-center px-3 py-1.5 border-t text-xs gap-1" style={{ gridTemplateColumns: "1.3fr 0.8fr 0.8fr 0.8fr 0.7fr 0.7fr 0.6fr", borderColor: "#EEF3F1", minWidth: 700 }}>
                 <div className="font-medium">{p.name} <span className="text-gray-400">{p.unit}</span></div>
                 <input type="number" step="any" value={values[p.id]?.mean ?? ""} onChange={e => setVal(p.id, { mean: e.target.value })}
-                  placeholder="Mean" className="w-full border rounded-md px-2 py-1 text-xs mr-2" style={{ borderColor: "#D8E5E1" }} />
+                  placeholder="Mean" className="w-full border rounded-md px-2 py-1 text-xs" style={{ borderColor: "#D8E5E1" }} />
                 <input type="number" step="any" value={values[p.id]?.sd ?? ""} onChange={e => setVal(p.id, { sd: e.target.value })}
                   placeholder="SD" className="w-full border rounded-md px-2 py-1 text-xs" style={{ borderColor: "#D8E5E1" }} />
+                <input type="number" step="any" value={values[p.id]?.cvPercent ?? ""} onChange={e => setVal(p.id, { cvPercent: e.target.value })}
+                  onBlur={() => fillSdFromCv(p.id, values[p.id]?.mean)} title="Fills SD automatically if SD is blank"
+                  placeholder="CV%" className="w-full border rounded-md px-2 py-1 text-xs" style={{ borderColor: "#D8E5E1" }} />
+                <input type="number" step="any" value={values[p.id]?.rangeLow ?? ""} onChange={e => setVal(p.id, { rangeLow: e.target.value })}
+                  placeholder="Low" className="w-full border rounded-md px-2 py-1 text-xs" style={{ borderColor: "#D8E5E1" }} />
+                <input type="number" step="any" value={values[p.id]?.rangeHigh ?? ""} onChange={e => setVal(p.id, { rangeHigh: e.target.value })}
+                  placeholder="High" className="w-full border rounded-md px-2 py-1 text-xs" style={{ borderColor: "#D8E5E1" }} />
+                <input type="number" value={values[p.id]?.peerGroupN ?? ""} onChange={e => setVal(p.id, { peerGroupN: e.target.value })}
+                  placeholder="N" className="w-full border rounded-md px-2 py-1 text-xs" style={{ borderColor: "#D8E5E1" }} />
               </div>
             ))}
           </div>
@@ -4185,7 +4221,7 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
 
         {!savedEntries ? (
           <div className="flex items-center justify-between">
-            <span className="text-xs text-gray-400">{filledCount > 0 ? `${filledCount} analyte(s) entered` : "Enter mean/SD for as many analytes as this material covers"}</span>
+            <span className="text-xs text-gray-400">{filledCount > 0 ? `${filledCount} analyte(s) entered (Mean + SD required; CV%/Range/N optional)` : "Enter at least Mean and SD for as many analytes as this material covers"}</span>
             <div className="flex gap-2">
               <button onClick={onClose} className="text-sm px-3 py-1.5 text-gray-500">Close</button>
               <button onClick={handleSave} disabled={filledCount === 0 || !materialName.trim() || !lotNumber.trim()}
@@ -4201,7 +4237,7 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
               <div className="text-xs text-gray-400 mb-3">No other machines to copy to.</div>
             ) : (
               <>
-                <p className="text-xs text-gray-500 mb-2">Copies these same mean/SD values to any analyte with a matching name on the machines you pick below — nothing is created for analytes that machine doesn't have.</p>
+                <p className="text-xs text-gray-500 mb-2">Copies these same values to any analyte with a matching name on the machines you pick below — nothing is created for analytes that machine doesn't have.</p>
                 <div className="flex flex-wrap gap-2 mb-3">
                   {otherMachines.map(m => (
                     <button key={m.id} onClick={() => toggleCopyTo(m.id)} className="text-xs px-3 py-1.5 rounded-md border flex items-center gap-1.5"
@@ -4219,7 +4255,7 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
               </>
             )}
             <div className="flex justify-end gap-2 mt-3 pt-3 border-t" style={{ borderColor: "#EEF3F1" }}>
-              <button onClick={() => { setMachineId(""); setMaterialName(""); setLotNumber(""); setExpiryDate(""); setValues({}); setSavedEntries(null); setSavedMsg(""); setCopyMsg(""); }} className="text-sm px-3 py-1.5 text-gray-500">Enter another lot</button>
+              <button onClick={() => { setMachineId(""); setMaterialName(""); setLotNumber(""); setExpiryDate(""); setReagentLot(""); setValues({}); setSavedEntries(null); setSavedMsg(""); setCopyMsg(""); }} className="text-sm px-3 py-1.5 text-gray-500">Enter another lot</button>
               <button onClick={onClose} className="text-sm px-4 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>Done</button>
             </div>
           </div>
@@ -4554,6 +4590,14 @@ function ControlForm({ onSave, onCancel }) {
   const [mean, setMean] = useState("");
   const [sd, setSd] = useState("");
   const [expiryDate, setExpiryDate] = useState("");
+  const [cvPercent, setCvPercent] = useState("");
+  const [rangeLow, setRangeLow] = useState("");
+  const [rangeHigh, setRangeHigh] = useState("");
+  const [peerGroupN, setPeerGroupN] = useState("");
+  const [reagentLot, setReagentLot] = useState("");
+
+  const fillSdFromCv = () => { if (cvPercent !== "" && mean !== "") setSd(((parseFloat(cvPercent) / 100) * parseFloat(mean)).toFixed(4)); };
+
   return (
     <div className="mb-3 p-3 rounded-md" style={{ background: COLORS.mint }}>
       <div className="grid grid-cols-6 gap-2 mb-2">
@@ -4566,9 +4610,27 @@ function ControlForm({ onSave, onCancel }) {
         <input type="number" step="any" value={sd} onChange={e => setSd(e.target.value)} placeholder="Target SD" className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
         <input type="date" value={expiryDate} onChange={e => setExpiryDate(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} title="Lot expiry" />
       </div>
+      <div className="text-[10px] text-gray-500 mb-1">From the manufacturer's value assignment sheet / certificate of analysis (all optional)</div>
+      <div className="grid grid-cols-6 gap-2 mb-2">
+        <div className="flex gap-1">
+          <input type="number" step="any" value={cvPercent} onChange={e => setCvPercent(e.target.value)} placeholder="CV%" className="text-xs border rounded-md px-2 py-1.5 w-full" style={{ borderColor: "#D8E5E1" }} />
+          <button type="button" onClick={fillSdFromCv} title="Fill SD from CV% × mean" className="text-xs px-1.5 rounded-md border shrink-0" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>→SD</button>
+        </div>
+        <input type="number" step="any" value={rangeLow} onChange={e => setRangeLow(e.target.value)} placeholder="Range low" className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
+        <input type="number" step="any" value={rangeHigh} onChange={e => setRangeHigh(e.target.value)} placeholder="Range high" className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
+        <input type="number" value={peerGroupN} onChange={e => setPeerGroupN(e.target.value)} placeholder="Peer group N" className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }} />
+        <input value={reagentLot} onChange={e => setReagentLot(e.target.value)} placeholder="Reagent lot" className="text-xs border rounded-md px-2 py-1.5 col-span-2" style={{ borderColor: "#D8E5E1" }} />
+      </div>
       <div className="flex justify-end gap-2">
         <button onClick={onCancel} className="text-xs px-3 py-1 rounded-md text-gray-500">Cancel</button>
-        <button onClick={() => lotNumber && mean !== "" && sd !== "" && onSave({ materialName, level, lotNumber, mean: parseFloat(mean), sd: parseFloat(sd), expiryDate })}
+        <button onClick={() => lotNumber && mean !== "" && sd !== "" && onSave({
+          materialName, level, lotNumber, mean: parseFloat(mean), sd: parseFloat(sd), expiryDate,
+          cvPercent: cvPercent === "" ? "" : parseFloat(cvPercent),
+          rangeLow: rangeLow === "" ? "" : parseFloat(rangeLow),
+          rangeHigh: rangeHigh === "" ? "" : parseFloat(rangeHigh),
+          peerGroupN: peerGroupN === "" ? "" : parseInt(peerGroupN, 10),
+          reagentLot,
+        })}
           className="text-xs px-3 py-1 rounded-md text-white" style={{ background: COLORS.teal }}>Save level</button>
       </div>
     </div>
@@ -6566,7 +6628,13 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
                         <div className="mt-1.5 pl-3 space-y-1">
                           {controlsForParam.map(c => (
                             <div key={c.id} className="flex items-center justify-between text-xs text-gray-500">
-                              <span>{c.materialName ? c.materialName + " · " : ""}{c.level} · lot {c.lotNumber} · mean {c.mean} SD {c.sd}</span>
+                              <span>
+                                {c.materialName ? c.materialName + " · " : ""}{c.level} · lot {c.lotNumber} · mean {c.mean} SD {c.sd}
+                                {c.cvPercent !== "" && ` · CV ${c.cvPercent}%`}
+                                {(c.rangeLow !== "" || c.rangeHigh !== "") && ` · range ${c.rangeLow || "?"}–${c.rangeHigh || "?"}`}
+                                {c.peerGroupN !== "" && ` · N=${c.peerGroupN}`}
+                                {c.reagentLot && ` · reagent lot ${c.reagentLot}`}
+                              </span>
                               {canDeleteRecords && <button onClick={() => removeControl(c.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={11} /></button>}
                             </div>
                           ))}
