@@ -3599,6 +3599,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [selectedMachineId, setSelectedMachineId] = useState(qcMachines[0]?.id || null);
   const [showNewEntry, setShowNewEntry] = useState(false);
+  const [showReceiveLot, setShowReceiveLot] = useState(false);
   const [pointsToShow, setPointsToShowState] = useState(() => localStorage.getItem("lqms_iqc_points_to_show") || "20"); // "7" | "20" | "30" | "all"
   const setPointsToShow = (val) => { setPointsToShowState(val); localStorage.setItem("lqms_iqc_points_to_show", val); };
   const [expandedControlId, setExpandedControlId] = useState(null);
@@ -3745,6 +3746,9 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
             <button onClick={() => setShowIqcReportPicker(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
               <Download size={14} /> Summary report
             </button>
+            <button onClick={() => setShowReceiveLot(true)} className="text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+              <Plus size={14} /> Receive QC lot
+            </button>
             <button onClick={() => setShowNewEntry(true)} className="text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
               <Plus size={14} /> New entry
             </button>
@@ -3813,6 +3817,13 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
         <NewIQCEntryPopup
           qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} personnel={personnel}
           defaultMachineId={selectedMachineId} onSaveBatch={addRunsBatch} onClose={() => setShowNewEntry(false)}
+        />
+      )}
+
+      {showReceiveLot && canEdit && (
+        <ReceiveQcLotPopup
+          qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} updateQcControls={updateQcControls}
+          defaultMachineId={selectedMachineId} activeLaboratoryId={activeLaboratoryId} onClose={() => setShowReceiveLot(false)}
         />
       )}
 
@@ -4049,6 +4060,170 @@ function NewIQCEntryPopup({ qcMachines, qcParameters, qcControls, personnel, def
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Entering QC MATERIAL data (mean/SD/lot/expiry per analyte) when a new
+ * lot arrives — distinct from NewIQCEntryPopup, which is for logging
+ * daily RESULTS against control levels that already exist. This is
+ * where those control levels get created in the first place.
+ *
+ * Since the same physical QC material is often run on more than one
+ * analyser, step two offers copying the just-entered values to any
+ * other machine that has identically-named parameters — matched by
+ * parameter name, so a machine missing one of the analytes simply
+ * doesn't get a row for it.
+ */
+function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcControls, defaultMachineId, activeLaboratoryId, onClose }) {
+  const [machineId, setMachineId] = useState(defaultMachineId || "");
+  const [materialName, setMaterialName] = useState("");
+  const [level, setLevel] = useState(CONTROL_LEVELS[0]);
+  const [lotNumber, setLotNumber] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [values, setValues] = useState({}); // parameterId -> { mean, sd }
+  const [savedEntries, setSavedEntries] = useState(null); // set once saved, drives step 2
+  const [savedMsg, setSavedMsg] = useState("");
+  const [copyToIds, setCopyToIds] = useState([]);
+  const [copyMsg, setCopyMsg] = useState("");
+
+  const knownMaterialNames = [...new Set(qcControls.map(c => c.materialName).filter(Boolean))].sort();
+  const paramsForMachine = qcParameters.filter(p => p.machineId === machineId);
+  const setVal = (paramId, patch) => setValues(v => ({ ...v, [paramId]: { ...v[paramId], ...patch } }));
+  const filledCount = Object.values(values).filter(v => v?.mean !== undefined && v.mean !== "" && v?.sd !== undefined && v.sd !== "").length;
+
+  const handleSave = () => {
+    if (!materialName.trim() || !lotNumber.trim()) return;
+    const entries = [];
+    paramsForMachine.forEach(p => {
+      const v = values[p.id];
+      if (v && v.mean !== undefined && v.mean !== "" && v.sd !== undefined && v.sd !== "") {
+        entries.push({ id: uid(), parameterId: p.id, materialName: materialName.trim(), level, lotNumber: lotNumber.trim(), mean: parseFloat(v.mean), sd: parseFloat(v.sd), expiryDate, laboratoryId: activeLaboratoryId });
+      }
+    });
+    if (entries.length === 0) return;
+    updateQcControls([...entries, ...qcControls]);
+    setSavedEntries(entries.map(e => ({ paramName: paramsForMachine.find(p => p.id === e.parameterId)?.name, mean: e.mean, sd: e.sd })));
+    setSavedMsg(`Saved ${entries.length} analyte(s) for ${materialName} — ${level}, lot ${lotNumber}, on ${qcMachines.find(m => m.id === machineId)?.name}.`);
+  };
+
+  const otherMachines = qcMachines.filter(m => m.id !== machineId);
+  const toggleCopyTo = (id) => setCopyToIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+
+  const handleCopy = () => {
+    if (!savedEntries || copyToIds.length === 0) return;
+    const copies = [];
+    copyToIds.forEach(targetMachineId => {
+      const targetParams = qcParameters.filter(p => p.machineId === targetMachineId);
+      savedEntries.forEach(entry => {
+        if (!entry.paramName) return;
+        const matchParam = targetParams.find(p => p.name.trim().toLowerCase() === entry.paramName.trim().toLowerCase());
+        if (!matchParam) return;
+        const alreadyExists = qcControls.some(c => c.parameterId === matchParam.id && c.materialName === materialName.trim() && c.level === level && c.lotNumber === lotNumber.trim());
+        if (!alreadyExists) copies.push({ id: uid(), parameterId: matchParam.id, materialName: materialName.trim(), level, lotNumber: lotNumber.trim(), mean: entry.mean, sd: entry.sd, expiryDate, laboratoryId: activeLaboratoryId });
+      });
+    });
+    if (copies.length > 0) updateQcControls([...copies, ...qcControls]);
+    setCopyMsg(`Copied ${copies.length} matching analyte(s) to ${copyToIds.length} other machine${copyToIds.length !== 1 ? "s" : ""}.`);
+    setCopyToIds([]);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg border max-w-3xl w-full max-h-[85vh] overflow-y-auto p-5" style={{ borderColor: "#E1EBE8" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-sm font-semibold flex items-center gap-2" style={{ color: COLORS.navy }}>
+            <FlaskConical size={15} color={COLORS.teal} /> Receive QC lot
+          </div>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={16} /></button>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">Enter the manufacturer's assigned mean/SD for each analyte this material covers — this creates the control level(s) results get checked against, separate from logging an actual result.</p>
+
+        <div className="grid grid-cols-4 gap-3 mb-4">
+          <Field label="Machine">
+            <select className={inputCls} style={inputStyle} value={machineId} onChange={e => { setMachineId(e.target.value); setValues({}); setSavedEntries(null); setSavedMsg(""); }}>
+              <option value="">Select…</option>{qcMachines.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </Field>
+          <Field label="QC material">
+            <input list="known-qc-materials" className={inputCls} style={inputStyle} value={materialName} onChange={e => setMaterialName(e.target.value)} placeholder="e.g. Liquichek" />
+            <datalist id="known-qc-materials">{knownMaterialNames.map(n => <option key={n} value={n} />)}</datalist>
+          </Field>
+          <Field label="Level">
+            <select className={inputCls} style={inputStyle} value={level} onChange={e => setLevel(e.target.value)}>
+              {CONTROL_LEVELS.map(l => <option key={l}>{l}</option>)}
+            </select>
+          </Field>
+          <Field label="Lot number"><input className={inputCls} style={inputStyle} value={lotNumber} onChange={e => setLotNumber(e.target.value)} /></Field>
+        </div>
+        <Field label="Expiry date (optional)"><input type="date" className={inputCls} style={{ ...inputStyle, maxWidth: 200 }} value={expiryDate} onChange={e => setExpiryDate(e.target.value)} /></Field>
+
+        {!machineId ? (
+          <Empty text="Pick a machine above to list its analytes." />
+        ) : savedEntries ? (
+          <div className="text-xs mb-2" style={{ color: COLORS.teal }}>{savedMsg}</div>
+        ) : paramsForMachine.length === 0 ? (
+          <Empty text="No parameters set up for this machine yet — add some from Settings → IQC configuration." />
+        ) : (
+          <div className="border rounded-md overflow-hidden mb-3" style={{ borderColor: "#EEF3F1" }}>
+            <div className="grid text-xs font-medium px-3 py-2" style={{ gridTemplateColumns: "1.4fr 1fr 1fr", background: COLORS.mint, color: COLORS.navy }}>
+              <div>Analyte</div><div>Mean</div><div>SD</div>
+            </div>
+            {paramsForMachine.map(p => (
+              <div key={p.id} className="grid items-center px-3 py-1.5 border-t text-xs" style={{ gridTemplateColumns: "1.4fr 1fr 1fr", borderColor: "#EEF3F1" }}>
+                <div className="font-medium">{p.name} <span className="text-gray-400">{p.unit}</span></div>
+                <input type="number" step="any" value={values[p.id]?.mean ?? ""} onChange={e => setVal(p.id, { mean: e.target.value })}
+                  placeholder="Mean" className="w-full border rounded-md px-2 py-1 text-xs mr-2" style={{ borderColor: "#D8E5E1" }} />
+                <input type="number" step="any" value={values[p.id]?.sd ?? ""} onChange={e => setVal(p.id, { sd: e.target.value })}
+                  placeholder="SD" className="w-full border rounded-md px-2 py-1 text-xs" style={{ borderColor: "#D8E5E1" }} />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {!savedEntries ? (
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-gray-400">{filledCount > 0 ? `${filledCount} analyte(s) entered` : "Enter mean/SD for as many analytes as this material covers"}</span>
+            <div className="flex gap-2">
+              <button onClick={onClose} className="text-sm px-3 py-1.5 text-gray-500">Close</button>
+              <button onClick={handleSave} disabled={filledCount === 0 || !materialName.trim() || !lotNumber.trim()}
+                className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-40" style={{ background: COLORS.teal }}>
+                <Save size={14} /> Save
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="pt-3 border-t" style={{ borderColor: "#EEF3F1" }}>
+            <div className="text-xs font-medium mb-2" style={{ color: COLORS.navy }}>Same material on other analysers?</div>
+            {otherMachines.length === 0 ? (
+              <div className="text-xs text-gray-400 mb-3">No other machines to copy to.</div>
+            ) : (
+              <>
+                <p className="text-xs text-gray-500 mb-2">Copies these same mean/SD values to any analyte with a matching name on the machines you pick below — nothing is created for analytes that machine doesn't have.</p>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {otherMachines.map(m => (
+                    <button key={m.id} onClick={() => toggleCopyTo(m.id)} className="text-xs px-3 py-1.5 rounded-md border flex items-center gap-1.5"
+                      style={{ borderColor: copyToIds.includes(m.id) ? COLORS.teal : "#D8E5E1", background: copyToIds.includes(m.id) ? COLORS.mint : "white", color: copyToIds.includes(m.id) ? COLORS.teal : COLORS.ink }}>
+                      <FlaskConical size={12} /> {m.name}
+                    </button>
+                  ))}
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-400">{copyMsg}</span>
+                  <button onClick={handleCopy} disabled={copyToIds.length === 0} className="text-sm px-3 py-1.5 rounded-md border disabled:opacity-40" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                    Copy to {copyToIds.length || ""} selected
+                  </button>
+                </div>
+              </>
+            )}
+            <div className="flex justify-end gap-2 mt-3 pt-3 border-t" style={{ borderColor: "#EEF3F1" }}>
+              <button onClick={() => { setMachineId(""); setMaterialName(""); setLotNumber(""); setExpiryDate(""); setValues({}); setSavedEntries(null); setSavedMsg(""); setCopyMsg(""); }} className="text-sm px-3 py-1.5 text-gray-500">Enter another lot</button>
+              <button onClick={onClose} className="text-sm px-4 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>Done</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
