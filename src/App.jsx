@@ -3626,7 +3626,6 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
   };
   const removeRun = (id) => updateQcRuns(qcRuns.filter(r => r.id !== id));
 
-  const machinesByDiscipline = DISCIPLINES.map(d => ({ discipline: d, machines: qcMachines.filter(m => m.discipline === d) }));
   const selectedMachine = qcMachines.find(m => m.id === selectedMachineId);
   const paramsForMachine = qcParameters.filter(p => p.machineId === selectedMachineId);
 
@@ -3746,6 +3745,9 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
             <button onClick={() => setShowIqcReportPicker(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
               <Download size={14} /> Summary report
             </button>
+            <button onClick={() => setShowNewEntry(true)} className="text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
+              <Plus size={14} /> New entry
+            </button>
           </div>
         )}
       </div>
@@ -3805,28 +3807,14 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
         </select>
       </div>
 
-      {/* Machine tabs — quick visual navigation, kept in sync with the Machine filter above */}
-      <div className="mb-4 space-y-3">
-        {machinesByDiscipline.map(group => (filterDiscipline === "All" || group.discipline === filterDiscipline) && group.machines.length > 0 && (
-          <div key={group.discipline}>
-            <div className="text-xs font-medium mb-1.5" style={{ color: DISCIPLINE_COLOR[group.discipline] }}>{group.discipline}</div>
-            <div className="flex flex-wrap gap-2">
-              {group.machines.map(m => (
-                <button key={m.id} onClick={() => setSelectedMachineId(m.id)}
-                  className="text-sm px-3 py-1.5 rounded-md border flex items-center gap-1.5"
-                  style={{
-                    borderColor: selectedMachineId === m.id ? DISCIPLINE_COLOR[group.discipline] : "#D8E5E1",
-                    background: selectedMachineId === m.id ? DISCIPLINE_COLOR[group.discipline] + "18" : "white",
-                    color: selectedMachineId === m.id ? DISCIPLINE_COLOR[group.discipline] : COLORS.ink,
-                  }}>
-                  <FlaskConical size={13} /> {m.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-        {qcMachines.length === 0 && <Empty text="No analysers added yet — add one from Settings → Configure machines." />}
-      </div>
+      {qcMachines.length === 0 && <Empty text="No analysers added yet — add one from Settings → Configure machines." />}
+
+      {showNewEntry && canEdit && (
+        <NewIQCEntryPopup
+          qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} personnel={personnel}
+          defaultMachineId={selectedMachineId} onSaveBatch={addRunsBatch} onClose={() => setShowNewEntry(false)}
+        />
+      )}
 
       {selectedMachine && (
         <div>
@@ -3842,28 +3830,6 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                 </div>
               )}
             </div>
-            {canEdit && (
-              <button onClick={() => setShowNewEntry(true)} className="text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
-                <Plus size={14} /> New entry
-              </button>
-            )}
-          </div>
-
-          {showNewEntry && canEdit && (
-            <NewIQCEntryPopup
-              qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} personnel={personnel}
-              defaultMachineId={selectedMachineId} onSaveBatch={addRunsBatch} onClose={() => setShowNewEntry(false)}
-            />
-          )}
-
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs text-gray-400">Points on chart:</div>
-            <select value={pointsToShow} onChange={e => setPointsToShow(e.target.value)} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
-              <option value="7">Last 7 points</option>
-              <option value="20">Last 20 points</option>
-              <option value="30">Last 30 points</option>
-              <option value="all">All points</option>
-            </select>
           </div>
 
           <div className="bg-white rounded-lg border overflow-x-auto" style={{ borderColor: "#E1EBE8" }}>
@@ -3918,8 +3884,16 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                         {showChartHere && (
                           <tr className="border-b" style={{ borderColor: "#EEF3F1" }}>
                             <td colSpan={9} className="px-3 py-3">
-                              <div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>
-                                {r.param?.name} — {r.ctrl.level}{r.ctrl.materialName ? ` · ${r.ctrl.materialName}` : ""} · Lot {r.ctrl.lotNumber} · Mean {r.ctrl.mean} · SD {r.ctrl.sd}
+                              <div className="flex items-center justify-between mb-1">
+                                <div className="text-xs font-medium" style={{ color: COLORS.navy }}>
+                                  {r.param?.name} — {r.ctrl.level}{r.ctrl.materialName ? ` · ${r.ctrl.materialName}` : ""} · Lot {r.ctrl.lotNumber} · Mean {r.ctrl.mean} · SD {r.ctrl.sd}
+                                </div>
+                                <select value={pointsToShow} onChange={e => setPointsToShow(e.target.value)} className="text-xs border rounded-md px-2 py-1" style={{ borderColor: "#D8E5E1" }}>
+                                  <option value="7">Last 7 points</option>
+                                  <option value="20">Last 20 points</option>
+                                  <option value="30">Last 30 points</option>
+                                  <option value="all">All points</option>
+                                </select>
                               </div>
                               {sliced.length > 0 ? <LJChart runs={sliced} mean={r.ctrl.mean} sd={r.ctrl.sd} /> : (
                                 <div className="text-xs text-gray-400 py-6 text-center border rounded-md" style={{ borderColor: "#EEF3F1" }}>No points to chart yet.</div>
