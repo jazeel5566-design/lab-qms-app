@@ -386,11 +386,26 @@ export const equipmentRecordToDb = (r, personnel) => ({
 });
 
 // ---------------- qc_machines / qc_parameters / qc_controls ----------------
-export const machineFromDb = (row) => ({ id: row.id, name: row.name, model: row.model || "", discipline: row.discipline, laboratoryId: row.laboratory_id });
-export const machineToDb = (m) => ({ name: m.name, model: m.model || null, discipline: m.discipline, laboratory_id: m.laboratoryId });
+export const machineFromDb = (row) => ({ id: row.id, name: row.name, model: row.model || "", discipline: row.discipline, laboratoryId: row.laboratory_id, protocol: row.protocol || "", analyserType: row.analyser_type || "", vendorInstrumentId: row.vendor_instrument_id || "" });
+export const machineToDb = (m) => ({ name: m.name, model: m.model || null, discipline: m.discipline, laboratory_id: m.laboratoryId, protocol: m.protocol || null, analyser_type: m.analyserType || null, vendor_instrument_id: m.vendorInstrumentId || null });
 
 export const parameterFromDb = (row) => ({ id: row.id, machineId: row.machine_id, name: row.name, unit: row.unit || "", laboratoryId: row.laboratory_id });
 export const parameterToDb = (p) => ({ machine_id: p.machineId, name: p.name, unit: p.unit || null, laboratory_id: p.laboratoryId });
+
+// ---------------- analyser_test_code_mappings (0042) ----------------
+export const testCodeMappingFromDb = (row) => ({
+  id: row.id,
+  laboratoryId: row.laboratory_id,
+  analyserType: row.analyser_type,
+  vendorTestCode: row.vendor_test_code,
+  parameterName: row.parameter_name,
+});
+export const testCodeMappingToDb = (m) => ({
+  laboratory_id: m.laboratoryId,
+  analyser_type: m.analyserType,
+  vendor_test_code: m.vendorTestCode,
+  parameter_name: m.parameterName,
+});
 
 export const controlFromDb = (row) => ({
   id: row.id, parameterId: row.parameter_id, level: row.level, lotNumber: row.lot_number || "",

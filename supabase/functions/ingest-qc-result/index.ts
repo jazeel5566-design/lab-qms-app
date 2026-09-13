@@ -21,8 +21,10 @@
 //   Header: X-API-Key: lqms_xxxxxxxxxxxx
 //   Body (JSON):
 //   {
-//     "machineName": "Ozelle EHBT-75",     // must match an existing QC machine's name exactly
-//     "parameter": "WBC",                   // must match an existing parameter name for that machine
+//     "machineName": "Ozelle EHBT-75",     // OR vendorInstrumentId below — at least one required
+//     "vendorInstrumentId": "SN123456",     // the analyser's own ID, if that's what the interface engine sends instead of a friendly name
+//     "parameter": "WBC",                   // OR vendorTestCode below — at least one required
+//     "vendorTestCode": "GLU",              // the analyser's own test code — resolved via analyser_test_code_mappings (0042) for that machine's analyser_type
 //     "level": "Level 1 (Low)",              // must be exactly one of the three level strings
 //     "lotNumber": "LOT12345",               // must match an existing control's lot number for that parameter
 //     "value": 5.4,
@@ -68,26 +70,41 @@ serve(async (req) => {
     return jsonError("Request body must be valid JSON");
   }
 
-  const { machineName, parameter, level, lotNumber, value, date, time } = body;
-  if (!machineName || !parameter || !level || value === undefined || value === null) {
-    return jsonError("machineName, parameter, level, and value are all required");
+  const { machineName, vendorInstrumentId, parameter, vendorTestCode, level, lotNumber, value, date, time } = body;
+  if ((!machineName && !vendorInstrumentId) || (!parameter && !vendorTestCode) || !level || value === undefined || value === null) {
+    return jsonError("(machineName or vendorInstrumentId), (parameter or vendorTestCode), level, and value are all required");
   }
 
   // If this key is restricted to one specific machine, enforce that here.
-  let machineQuery = admin.from("qc_machines").select("id, name, laboratory_id").ilike("name", machineName);
+  // A machine can be identified either by its friendly name in this app,
+  // or by the instrument's own ID/serial (vendor_instrument_id) — an
+  // automated interface engine typically only knows the latter.
+  let machineQuery = admin.from("qc_machines").select("id, name, laboratory_id, analyser_type");
+  machineQuery = vendorInstrumentId ? machineQuery.eq("vendor_instrument_id", vendorInstrumentId) : machineQuery.ilike("name", machineName);
   const { data: machine } = await machineQuery.single();
-  if (!machine) return jsonError(`No QC machine found matching "${machineName}"`, 404);
+  if (!machine) return jsonError(`No QC machine found matching "${machineName || vendorInstrumentId}"`, 404);
   if (keyRow.qc_machine_id && keyRow.qc_machine_id !== machine.id) {
     return jsonError("This API key is not authorized to submit results for that machine", 403);
   }
 
-  const { data: param } = await admin.from("qc_parameters").select("id").eq("machine_id", machine.id).ilike("name", parameter).single();
-  if (!param) return jsonError(`No parameter "${parameter}" found for machine "${machineName}"`, 404);
+  // Resolve a vendor test code to this app's parameter name via the
+  // per-analyser-type mapping table, if a code was sent instead of a name.
+  let resolvedParameterName = parameter;
+  if (!resolvedParameterName && vendorTestCode) {
+    if (!machine.analyser_type) return jsonError(`Machine "${machine.name}" has no analyser_type set, so vendor test codes can't be resolved for it — set one in the app first.`, 400);
+    const { data: mapping } = await admin.from("analyser_test_code_mappings").select("parameter_name")
+      .eq("laboratory_id", machine.laboratory_id).eq("analyser_type", machine.analyser_type).eq("vendor_test_code", vendorTestCode).single();
+    if (!mapping) return jsonError(`No test code mapping found for "${vendorTestCode}" on analyser type "${machine.analyser_type}" — add one from the IQC page first.`, 404);
+    resolvedParameterName = mapping.parameter_name;
+  }
+
+  const { data: param } = await admin.from("qc_parameters").select("id").eq("machine_id", machine.id).ilike("name", resolvedParameterName).single();
+  if (!param) return jsonError(`No parameter "${resolvedParameterName}" found for machine "${machine.name}"`, 404);
 
   let controlQuery = admin.from("qc_controls").select("id").eq("parameter_id", param.id).eq("level", level);
   if (lotNumber) controlQuery = controlQuery.eq("lot_number", lotNumber);
   const { data: controls } = await controlQuery;
-  if (!controls || controls.length === 0) return jsonError(`No matching QC control found for parameter "${parameter}", level "${level}"${lotNumber ? `, lot "${lotNumber}"` : ""}`, 404);
+  if (!controls || controls.length === 0) return jsonError(`No matching QC control found for parameter "${resolvedParameterName}", level "${level}"${lotNumber ? `, lot "${lotNumber}"` : ""}`, 404);
   if (controls.length > 1) return jsonError(`Multiple matching QC controls found — include lotNumber to disambiguate`, 400);
 
   const { data: run, error } = await admin

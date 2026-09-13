@@ -21,6 +21,7 @@ import * as opsApi from "./api/operations.js";
 import * as qcApi from "./api/qc.js";
 import * as eqaDocApi from "./api/eqaAndDocuments.js";
 import * as eqaProgramsApi from "./api/eqaPrograms.js";
+import * as analyserMappingsApi from "./api/analyserMappings.js";
 import * as riskApi from "./api/risks.js";
 import * as mgmtReviewApi from "./api/managementReviews.js";
 import * as storageApi from "./api/storage.js";
@@ -42,7 +43,7 @@ import {
   equipmentRecordFromDb, equipmentRecordToDb,
   machineFromDb, machineToDb, parameterFromDb, parameterToDb,
   controlFromDb, controlToDb, runFromDb, runToDb,
-  eqaFromDb, eqaToDb, eqaProgramFromDb, eqaProgramToDb, programAnalyteFromDb, programAnalyteToDb, documentFromDb, documentToDb,
+  eqaFromDb, eqaToDb, eqaProgramFromDb, eqaProgramToDb, programAnalyteFromDb, programAnalyteToDb, testCodeMappingFromDb, testCodeMappingToDb, documentFromDb, documentToDb,
   riskFromDb, riskToDb, managementReviewFromDb, managementReviewToDb,
   acknowledgmentFromDb, downtimeFromDb, clauseEvidenceFromDb, taskCommentFromDb, taskTemplateFromDb,
   laboratoryFromDb, personnelLabFromDb,
@@ -350,6 +351,7 @@ export default function App() {
   const [eqaEvents, setEqaEvents] = useState([]);
   const [eqaPrograms, setEqaPrograms] = useState([]);
   const [programAnalytes, setProgramAnalytes] = useState([]);
+  const [testCodeMappings, setTestCodeMappings] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [risks, setRisks] = useState([]);
   const [managementReviews, setManagementReviews] = useState([]);
@@ -394,7 +396,7 @@ export default function App() {
    * or later, once they've picked one from the login-time selector.
    */
   const loadLabScopedData = async (labId, p) => {
-    const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, progRows, analyteRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows] = await Promise.all([
+    const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, progRows, analyteRows, mappingRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows] = await Promise.all([
       clauseApi.listClauseStatus(labId),
       taskApi.listTasks(labId),
       ncApi.listNonconformities(labId),
@@ -408,6 +410,7 @@ export default function App() {
       eqaDocApi.listEqaEvents(labId),
       eqaProgramsApi.listEqaPrograms(labId),
       eqaProgramsApi.listProgramAnalytes(labId),
+      analyserMappingsApi.listTestCodeMappings(labId),
       eqaDocApi.listDocuments(labId),
       riskApi.listRisks(labId),
       mgmtReviewApi.listManagementReviews(labId),
@@ -436,6 +439,7 @@ export default function App() {
     setEqaEvents(eqaRows.map(eqaFromDb));
     setEqaPrograms(progRows.map(eqaProgramFromDb));
     setProgramAnalytes(analyteRows.map(programAnalyteFromDb));
+    setTestCodeMappings(mappingRows.map(testCodeMappingFromDb));
     setDocuments(docRows.map(r => documentFromDb(r, p)));
     setRisks(riskRows.map(r => riskFromDb(r, p)));
     setManagementReviews(mrRows.map(r => managementReviewFromDb(r, p)));
@@ -681,6 +685,12 @@ export default function App() {
     create: (row) => eqaProgramsApi.addProgramAnalyte(row),
     update: () => { throw new Error("Analytes aren't edited in place — remove and re-add instead."); },
     remove: (id) => eqaProgramsApi.deleteProgramAnalyte(id),
+  });
+
+  const updateTestCodeMappings = makeListUpdater(setTestCodeMappings, () => testCodeMappings, testCodeMappingToDb, testCodeMappingFromDb, {
+    create: (row) => analyserMappingsApi.createTestCodeMapping(row),
+    update: () => { throw new Error("Mappings aren't edited in place — remove and re-add instead."); },
+    remove: (id) => analyserMappingsApi.deleteTestCodeMapping(id),
   });
 
   /** One click to raise an NC directly from an Unsatisfactory EQA result, pre-filled — and records the link back on the EQA row so it's never accidentally raised twice. */
@@ -1186,7 +1196,8 @@ export default function App() {
           qcRuns={qcRuns} updateQcRuns={updateQcRuns} personnel={personnel}
           canEdit={canEdit} canAuthorizeIQC={canAuthorizeIQC} currentUser={currentUser}
           authorizeQcRunAction={authorizeQcRunAction} bulkImportQcRuns={bulkImportQcRuns}
-          equipment={equipment} updateEquipment={updateEquipment} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords} />}
+          equipment={equipment} updateEquipment={updateEquipment} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords}
+          testCodeMappings={testCodeMappings} updateTestCodeMappings={updateTestCodeMappings} />}
         {tab === "eqa" && <EQAPage eqaEvents={eqaEvents} updateEqaEvents={updateEqaEvents} qcMachines={qcMachines} canEdit={canEdit}
           ncs={ncs} createNcFromEqaAction={createNcFromEqaAction} activeLaboratoryId={activeLaboratoryId} laboratories={laboratories}
           eqaPrograms={eqaPrograms} updateEqaPrograms={updateEqaPrograms} programAnalytes={programAnalytes} updateProgramAnalytes={updateProgramAnalytes} canDeleteEqaResults={canDeleteEqaResults} canDeleteRecords={canDeleteRecords} />}
@@ -3578,8 +3589,9 @@ function AuthorizeControl({ run, currentUser, canAuthorize, onAuthorize }) {
 }
 
 // ---------------- IQC & Levey-Jennings (Clause 7.3.7 Quality control) ----------------
-function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns, equipment, updateEquipment, activeLaboratoryId, canDeleteRecords }) {
+function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameters, qcControls, updateQcControls, qcRuns, updateQcRuns, personnel, canEdit, canAuthorizeIQC, currentUser, authorizeQcRunAction, bulkImportQcRuns, equipment, updateEquipment, activeLaboratoryId, canDeleteRecords, testCodeMappings, updateTestCodeMappings }) {
   const [showMachineForm, setShowMachineForm] = useState(false);
+  const [showMappingsFor, setShowMappingsFor] = useState(null);
   const [showCsvImport, setShowCsvImport] = useState(false);
   const [selectedMachineId, setSelectedMachineId] = useState(qcMachines[0]?.id || null);
   const [showParamForm, setShowParamForm] = useState(false);
@@ -3872,6 +3884,13 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
             <div>
               <div className="text-lg font-medium" style={{ color: COLORS.navy }}>{selectedMachine.name}</div>
               <div className="text-xs text-gray-400">{selectedMachine.discipline} · {selectedMachine.model || "no model set"}</div>
+              {(selectedMachine.protocol || selectedMachine.analyserType) && (
+                <div className="text-xs mt-1 flex items-center gap-1.5">
+                  {selectedMachine.protocol && <Badge color={selectedMachine.protocol === "Manual/API" ? "#9AA5A3" : COLORS.teal}>{selectedMachine.protocol}</Badge>}
+                  {selectedMachine.analyserType && <span className="text-gray-400">{selectedMachine.analyserType}</span>}
+                  {selectedMachine.vendorInstrumentId && <span className="text-gray-300">· ID: {selectedMachine.vendorInstrumentId}</span>}
+                </div>
+              )}
             </div>
             {canEdit && (
               <div className="flex gap-2">
@@ -3881,6 +3900,11 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                 <button onClick={() => setShowParamForm(v => !v)} className="text-xs flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
                   <Plus size={13} /> Add parameter
                 </button>
+                {selectedMachine.protocol && selectedMachine.protocol !== "Manual/API" && (
+                  <button onClick={() => setShowMappingsFor(selectedMachine.analyserType)} className="text-xs flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                    <ListChecks size={13} /> Manage test codes
+                  </button>
+                )}
                 {canDeleteRecords && <button onClick={() => removeMachine(selectedMachine.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={13} /> Remove machine</button>}
               </div>
             )}
@@ -4078,6 +4102,11 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
             </div>
           </div>
         </div>
+      )}
+
+      {showMappingsFor && (
+        <ManageTestCodeMappings analyserType={showMappingsFor} testCodeMappings={testCodeMappings} updateTestCodeMappings={updateTestCodeMappings}
+          qcParameters={qcParameters} activeLaboratoryId={activeLaboratoryId} onClose={() => setShowMappingsFor(null)} />
       )}
     </div>
   );
@@ -4364,11 +4393,65 @@ function LJChart({ runs, mean, sd }) {
   );
 }
 
+// ---------------- Manage HL7/ASTM test code mappings for one analyser type ----------------
+function ManageTestCodeMappings({ analyserType, testCodeMappings, updateTestCodeMappings, qcParameters, activeLaboratoryId, onClose }) {
+  const [vendorCode, setVendorCode] = useState("");
+  const [parameterName, setParameterName] = useState("");
+
+  const mappingsHere = testCodeMappings.filter(m => m.analyserType === analyserType);
+  const knownParameterNames = [...new Set(qcParameters.map(p => p.name))].sort();
+
+  const addMapping = () => {
+    if (!vendorCode.trim() || !parameterName.trim()) return;
+    updateTestCodeMappings([{ id: uid(), laboratoryId: activeLaboratoryId, analyserType, vendorTestCode: vendorCode.trim(), parameterName: parameterName.trim() }, ...testCodeMappings]);
+    setVendorCode(""); setParameterName("");
+  };
+  const removeMapping = (id) => updateTestCodeMappings(testCodeMappings.filter(m => m.id !== id));
+
+  return (
+    <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50 p-4" onClick={onClose}>
+      <div className="bg-white rounded-lg border max-w-lg w-full max-h-[85vh] overflow-y-auto p-5" style={{ borderColor: "#E1EBE8" }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-sm font-semibold" style={{ color: COLORS.navy }}>Test code mappings — {analyserType}</div>
+          <button onClick={onClose} className="text-gray-400"><X size={16} /></button>
+        </div>
+        <p className="text-xs text-gray-500 mb-3">
+          When results arrive automatically via an HL7/ASTM interface (through an on-site interface engine forwarding to this app), the analyser identifies each test by its own internal code — not the analyte name used here. These mappings let the ingest step translate one into the other. Shared across every machine of this same analyser type.
+        </p>
+
+        <div className="border rounded-md p-3 mb-4" style={{ borderColor: "#E1EBE8" }}>
+          <div className="text-xs font-medium text-gray-500 mb-2">Add a mapping</div>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <input className={inputCls} style={inputStyle} value={vendorCode} onChange={e => setVendorCode(e.target.value)} placeholder="Vendor test code (e.g. GLU)" />
+            <input list="known-parameter-names" className={inputCls} style={inputStyle} value={parameterName} onChange={e => setParameterName(e.target.value)} placeholder="This app's analyte name" />
+            <datalist id="known-parameter-names">{knownParameterNames.map(n => <option key={n} value={n} />)}</datalist>
+          </div>
+          <button onClick={addMapping} className="text-xs px-3 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Plus size={12} /> Add mapping</button>
+        </div>
+
+        <div className="text-xs font-medium text-gray-500 mb-2">Existing mappings</div>
+        <div className="divide-y" style={{ borderColor: "#E1EBE8" }}>
+          {mappingsHere.length === 0 && <Empty text="No mappings yet for this analyser type." />}
+          {mappingsHere.map(m => (
+            <div key={m.id} className="flex items-center justify-between py-2 text-sm">
+              <span><span className="font-mono text-xs px-1.5 py-0.5 rounded" style={{ background: COLORS.mint, color: COLORS.teal }}>{m.vendorTestCode}</span> → {m.parameterName}</span>
+              <button onClick={() => removeMapping(m.id)} className="text-gray-300 hover:text-red-500"><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function MachineForm({ onSave, onCancel, equipment }) {
   const [name, setName] = useState("");
   const [discipline, setDiscipline] = useState(DISCIPLINES[0]);
   const [model, setModel] = useState("");
   const [linkedEquipmentId, setLinkedEquipmentId] = useState("");
+  const [protocol, setProtocol] = useState("");
+  const [analyserType, setAnalyserType] = useState("");
+  const [vendorInstrumentId, setVendorInstrumentId] = useState("");
 
   const applyEquipment = (equipmentId) => {
     setLinkedEquipmentId(equipmentId);
@@ -4398,10 +4481,25 @@ function MachineForm({ onSave, onCancel, equipment }) {
           </select>
         </Field>
         <Field label="Model"><input className={inputCls} style={inputStyle} value={model} onChange={e => setModel(e.target.value)} /></Field>
+        <Field label="Analyser type (for test code mapping)">
+          <input className={inputCls} style={inputStyle} value={analyserType} onChange={e => setAnalyserType(e.target.value)} placeholder="e.g. Abbott Alinity ci-series" />
+          <div className="text-[11px] text-gray-400 mt-1">Test code mappings are shared across every machine of the same type — use the exact same text for identical models.</div>
+        </Field>
+        <Field label="Connection protocol">
+          <select className={inputCls} style={inputStyle} value={protocol} onChange={e => setProtocol(e.target.value)}>
+            <option value="">Manual entry (no interface)</option>
+            <option value="HL7">HL7</option>
+            <option value="ASTM">ASTM</option>
+            <option value="Manual/API">Manual/API (results entered or posted directly)</option>
+          </select>
+        </Field>
+        <Field label="Vendor instrument ID (optional)">
+          <input className={inputCls} style={inputStyle} value={vendorInstrumentId} onChange={e => setVendorInstrumentId(e.target.value)} placeholder="Serial/ID the analyser uses to identify itself" />
+        </Field>
       </div>
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button onClick={() => name.trim() && onSave({ name, discipline, model, linkedEquipmentId })} className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Add machine</button>
+        <button onClick={() => name.trim() && onSave({ name, discipline, model, linkedEquipmentId, protocol, analyserType, vendorInstrumentId })} className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Add machine</button>
       </div>
     </div>
   );
