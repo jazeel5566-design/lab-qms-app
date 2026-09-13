@@ -1,4 +1,4 @@
-import { supabase } from "../supabaseClient.js";
+import { supabase, functionErrorMessage } from "../supabaseClient.js";
 
 /**
  * Admin-only staff creation WITH a login (name + password + access role).
@@ -13,7 +13,7 @@ export async function adminCreateStaff({ name, jobTitle, email, recordCardNumber
   const { data, error } = await supabase.functions.invoke("admin-create-staff", {
     body: { name, jobTitle, email, recordCardNumber, password, accessRole },
   });
-  if (error) throw new Error(error.message || "Failed to create staff account.");
+  if (error) throw new Error(await functionErrorMessage(error));
   if (data?.error) throw new Error(data.error);
   return data.person;
 }
@@ -26,7 +26,7 @@ export async function adminResetPassword(personnelId, newPassword) {
   const { data, error } = await supabase.functions.invoke("admin-reset-password", {
     body: { personnelId, newPassword },
   });
-  if (error) throw new Error(error.message || "Failed to reset password.");
+  if (error) throw new Error(await functionErrorMessage(error));
   if (data?.error) throw new Error(data.error);
   return data;
 }

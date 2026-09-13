@@ -1,4 +1,4 @@
-import { supabase } from "../supabaseClient.js";
+import { supabase, functionErrorMessage } from "../supabaseClient.js";
 
 export async function listMachineApiKeys() {
   const { data, error } = await supabase.from("machine_api_keys").select("*").order("created_at", { ascending: false });
@@ -9,7 +9,7 @@ export async function listMachineApiKeys() {
 /** Calls the create-api-key Edge Function — returns { id, plainKey, keyPrefix }. plainKey is shown exactly once and never recoverable afterward. */
 export async function createMachineApiKey(label, qcMachineId, laboratoryId) {
   const { data, error } = await supabase.functions.invoke("create-api-key", { body: { label, qcMachineId: qcMachineId || null, laboratoryId: laboratoryId || null } });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(await functionErrorMessage(error));
   if (data?.error) throw new Error(data.error);
   return data;
 }

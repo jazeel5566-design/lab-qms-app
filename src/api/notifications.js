@@ -1,4 +1,4 @@
-import { supabase } from "../supabaseClient.js";
+import { supabase, functionErrorMessage } from "../supabaseClient.js";
 
 /**
  * Fires a notification email. Deliberately never throws — a failed or
@@ -8,7 +8,8 @@ import { supabase } from "../supabaseClient.js";
 export async function sendNotificationEmail(to, subject, html) {
   if (!to) return; // no email on file for this person — skip silently
   try {
-    await supabase.functions.invoke("send-email", { body: { to, subject, html } });
+    const { error } = await supabase.functions.invoke("send-email", { body: { to, subject, html } });
+    if (error) console.error("Notification email failed to send:", await functionErrorMessage(error));
   } catch (e) {
     console.error("Notification email failed to send:", e);
   }

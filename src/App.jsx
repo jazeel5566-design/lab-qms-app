@@ -10,7 +10,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ReferenceLine, ResponsiveContainer
 } from "recharts";
 import * as XLSX from "xlsx";
-import { supabase } from "./supabaseClient.js";
+import { supabase, functionErrorMessage } from "./supabaseClient.js";
 import * as authApi from "./auth.js";
 import { adminCreateStaff, adminResetPassword } from "./api/adminStaff.js";
 import * as personnelApi from "./api/personnel.js";
@@ -6237,7 +6237,7 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
     setResendStatusLoading(true);
     try {
       const { data, error } = await supabase.functions.invoke("check-resend-status");
-      if (error) throw error;
+      if (error) throw new Error(await functionErrorMessage(error));
       setResendStatus(data);
     } catch (e) {
       setResendStatus({ configured: false, reason: e.message });

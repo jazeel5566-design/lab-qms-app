@@ -25,3 +25,28 @@ export const supabase = createClient(
   isSupabaseConfigured ? url : "https://placeholder.supabase.co",
   isSupabaseConfigured ? anonKey : "placeholder-anon-key"
 );
+
+/**
+ * supabase.functions.invoke() has a well-known gotcha: when the function
+ * responds with a non-2xx status, the `error` it returns is a
+ * FunctionsHttpError whose own .message is just the generic
+ * "Edge Function returned a non-2xx status code" — the function's actual
+ * { error: "..." } response body is NOT automatically read. That real
+ * reason is still there, on error.context (the raw Response object), and
+ * has to be read out explicitly. Wrap every edge function call's error
+ * handling in this so the real reason reaches the person using the app
+ * instead of a meaningless generic string.
+ */
+export async function functionErrorMessage(error) {
+  if (!error) return "";
+  try {
+    if (error.context && typeof error.context.json === "function") {
+      const body = await error.context.json();
+      if (body?.error) return body.error;
+      if (body?.message) return body.message;
+    }
+  } catch {
+    // context wasn't valid JSON — fall through to the generic message below.
+  }
+  return error.message || String(error);
+}
