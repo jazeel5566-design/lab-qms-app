@@ -4837,7 +4837,7 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
         </select>
       </div>
 
-      {showForm && canEdit && <EQAForm qcMachines={qcMachines} onCancel={() => setShowForm(false)} onSave={addEvents} laboratories={laboratories} eqaPrograms={eqaPrograms} programAnalytes={programAnalytes} />}
+      {showForm && canEdit && <EQAForm qcMachines={qcMachines} onCancel={() => setShowForm(false)} onSave={addEvents} laboratories={laboratories} eqaPrograms={eqaPrograms} programAnalytes={programAnalytes} eqaEvents={eqaEvents} />}
 
       <div className="bg-white rounded-lg border overflow-x-auto" style={{ borderColor: "#E1EBE8" }}>
         {filtered.length === 0 ? <Empty text="No EQA results logged yet." /> : (
@@ -4919,7 +4919,7 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
   );
 }
 
-function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, programAnalytes }) {
+function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, programAnalytes, eqaEvents }) {
   const [mode, setMode] = useState("single"); // "single" | "batch"
   const [discipline, setDiscipline] = useState(laboratories[0]?.name || "");
   const [machineId, setMachineId] = useState("");
@@ -4934,6 +4934,15 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
   const provider = selectedProgram?.provider || "";
   const cycle = selectedProgram?.cycle || "";
 
+  /** Every unit ever entered for a given analyte name, most recently used first — offered as a dropdown instead of retyping the same unit every time. */
+  const unitsUsedFor = (analyteName) => {
+    const seen = [];
+    [...eqaEvents].sort((a, b) => (b.dateReceived || "").localeCompare(a.dateReceived || "")).forEach(e => {
+      if (e.parameter === analyteName && e.unit && !seen.includes(e.unit)) seen.push(e.unit);
+    });
+    return seen;
+  };
+
   // Single-entry fields
   const [parameter, setParameter] = useState("");
   const [customParameter, setCustomParameter] = useState(false);
@@ -4946,21 +4955,32 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
   const [peerMean, setPeerMean] = useState("");
   const [peerSD, setPeerSD] = useState("");
 
-  // Batch-entry rows — same shared header above (discipline/program).
-  // run date, due date, and date received are PER ROW rather than shared,
-  // since a monthly-annual cycle's 12 samples each have their own dates
-  // spread across the year — "Fill 12 samples" below is a shortcut for
-  // exactly that common case (one analyte reported across a full cycle).
-  const blankRow = () => ({ parameter: "", sampleNumber: "", unit: "", runDate: "", dueDate: "", dateReceived: "", labResult: "", peerMean: "", peerSD: "" });
-  const [rows, setRows] = useState([blankRow()]);
-  const updateRow = (i, patch) => setRows(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r));
-  const addRow = () => setRows(prev => [...prev, blankRow()]);
-  const removeRow = (i) => setRows(prev => prev.filter((_, idx) => idx !== i));
-  const fill12Samples = () => {
-    const sharedParameter = rows[0]?.parameter || "";
-    const sharedUnit = rows[0]?.unit || "";
-    setRows(Array.from({ length: 12 }, (_, i) => ({ ...blankRow(), parameter: sharedParameter, unit: sharedUnit, sampleNumber: String(i + 1) })));
-  };
+  /**
+   * Batch mode is now organized around one sample of one program: pick
+   * the sample number and its dates ONCE, then every analyte the
+   * program's catalog lists is ready to fill in below — matching how a
+   * provider's result sheet actually arrives (one sample, many
+   * analytes on it), rather than one analyte repeated across many
+   * samples like the old "Fill 12 samples" shortcut did.
+   */
+  const [batchSampleNumber, setBatchSampleNumber] = useState("");
+  const [batchRunDate, setBatchRunDate] = useState("");
+  const [batchDueDate, setBatchDueDate] = useState("");
+  const [batchDateReceived, setBatchDateReceived] = useState(todayISO());
+  const blankRow = (name = "") => ({ parameter: name, unit: "", labResult: "", peerMean: "", peerSD: "" });
+  const [batchRows, setBatchRows] = useState([blankRow()]);
+  const updateBatchRow = (i, patch) => setBatchRows(prev => prev.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  const addBatchRow = () => setBatchRows(prev => [...prev, blankRow()]);
+  const removeBatchRow = (i) => setBatchRows(prev => prev.filter((_, idx) => idx !== i));
+
+  // Whenever the program changes in batch mode, replace the row list with
+  // exactly that program's own analyte catalog — this is the "enter all
+  // analytes in one go" behavior once a program is picked.
+  useEffect(() => {
+    if (mode === "batch" && analytesForProgram.length > 0) {
+      setBatchRows(analytesForProgram.map(a => blankRow(a.analyte)));
+    }
+  }, [programId, mode]);
 
   const machinesForDiscipline = qcMachines.filter(m => m.discipline === discipline);
   const sharedFields = { discipline, machineId, provider, cycle, programId: programId || null, nextCycleDate, notes };
@@ -4970,9 +4990,12 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
       if (!parameter.trim() || labResult === "") return;
       onSave([{ ...sharedFields, parameter, sampleNumber, unit, runDate, dueDate, dateReceived, labResult, peerMean, peerSD }]);
     } else {
-      const validRows = rows.filter(r => r.parameter.trim() && r.labResult !== "");
+      const validRows = batchRows.filter(r => r.parameter.trim() && r.labResult !== "");
       if (validRows.length === 0) return;
-      onSave(validRows.map(r => ({ ...sharedFields, ...r })));
+      onSave(validRows.map(r => ({
+        ...sharedFields, ...r,
+        sampleNumber: batchSampleNumber, runDate: batchRunDate, dueDate: batchDueDate, dateReceived: batchDateReceived,
+      })));
     }
   };
 
@@ -5026,7 +5049,20 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
             )}
           </Field>
           <Field label="Sample # (optional)"><input type="number" min="1" className={inputCls} style={inputStyle} value={sampleNumber} onChange={e => setSampleNumber(e.target.value)} placeholder="e.g. 1–12" /></Field>
-          <Field label="Unit"><input className={inputCls} style={inputStyle} value={unit} onChange={e => setUnit(e.target.value)} placeholder="e.g. mg/dL, ng/mL, IU/L" /></Field>
+          <Field label="Unit">
+            {parameter && unitsUsedFor(parameter).length > 0 ? (
+              <select className={inputCls} style={inputStyle} value={unit} onChange={e => setUnit(e.target.value)}>
+                <option value="">Select…</option>
+                {unitsUsedFor(parameter).map(u => <option key={u} value={u}>{u}</option>)}
+                <option value="__other__">Other…</option>
+              </select>
+            ) : (
+              <input className={inputCls} style={inputStyle} value={unit === "__other__" ? "" : unit} onChange={e => setUnit(e.target.value)} placeholder="e.g. mg/dL, ng/mL, IU/L" />
+            )}
+            {unit === "__other__" && (
+              <input className={inputCls} style={{ ...inputStyle, marginTop: 4 }} value="" onChange={e => setUnit(e.target.value)} placeholder="Type unit" autoFocus />
+            )}
+          </Field>
           <Field label="Sample run date"><input type="date" className={inputCls} style={inputStyle} value={runDate} onChange={e => setRunDate(e.target.value)} /></Field>
           <Field label="Submission due date"><input type="date" className={inputCls} style={inputStyle} value={dueDate} onChange={e => setDueDate(e.target.value)} /></Field>
           <Field label="Date result received"><input type="date" className={inputCls} style={inputStyle} value={dateReceived} onChange={e => setDateReceived(e.target.value)} /></Field>
@@ -5036,38 +5072,47 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
         </div>
       ) : (
         <div className="mb-3">
-          <div className="flex items-center justify-between mb-1">
-            <div className="text-xs font-medium text-gray-500">Results in this batch — each row is one sample/analyte result, with its own dates</div>
-            <button onClick={fill12Samples} className="text-xs flex items-center gap-1" style={{ color: COLORS.teal }}>
-              <Copy size={12} /> Fill 12 samples (same analyte)
-            </button>
+          <div className="grid grid-cols-4 gap-3 mb-3">
+            <Field label="Sample #"><input type="number" min="1" className={inputCls} style={inputStyle} value={batchSampleNumber} onChange={e => setBatchSampleNumber(e.target.value)} placeholder="e.g. 1–12" /></Field>
+            <Field label="Sample run date"><input type="date" className={inputCls} style={inputStyle} value={batchRunDate} onChange={e => setBatchRunDate(e.target.value)} /></Field>
+            <Field label="Submission due date"><input type="date" className={inputCls} style={inputStyle} value={batchDueDate} onChange={e => setBatchDueDate(e.target.value)} /></Field>
+            <Field label="Date result received"><input type="date" className={inputCls} style={inputStyle} value={batchDateReceived} onChange={e => setBatchDateReceived(e.target.value)} /></Field>
           </div>
-          {rows.map((r, i) => (
-            <div key={i} className="border rounded-md p-2 mb-1.5" style={{ borderColor: "#E1EBE8" }}>
-              <div className="flex items-center gap-2 mb-1.5">
-                {analytesForProgram.length > 0 ? (
-                  <select className={inputCls} style={{ ...inputStyle, flex: 1 }} value={r.parameter} onChange={e => updateRow(i, { parameter: e.target.value })}>
-                    <option value="">Select an analyte…</option>
-                    {analytesForProgram.map(a => <option key={a.id} value={a.analyte}>{a.analyte}</option>)}
-                  </select>
-                ) : (
-                  <input className={inputCls} style={{ ...inputStyle, flex: 1 }} value={r.parameter} onChange={e => updateRow(i, { parameter: e.target.value })} placeholder="Analyte" />
-                )}
-                <input type="number" min="1" className={inputCls} style={{ ...inputStyle, width: 90 }} value={r.sampleNumber} onChange={e => updateRow(i, { sampleNumber: e.target.value })} placeholder="Sample #" />
-                <input className={inputCls} style={{ ...inputStyle, width: 110 }} value={r.unit} onChange={e => updateRow(i, { unit: e.target.value })} placeholder="Unit" />
-                <button onClick={() => removeRow(i)} disabled={rows.length === 1} className="text-gray-300 hover:text-red-500 disabled:opacity-30 shrink-0"><Trash2 size={14} /></button>
+          <div className="text-xs font-medium text-gray-500 mb-1">
+            {analytesForProgram.length > 0 ? "Every analyte in this program — fill in the ones on this sample's result sheet" : "Add each analyte on this sample below"}
+          </div>
+          {batchRows.map((r, i) => {
+            const pastUnits = r.parameter ? unitsUsedFor(r.parameter) : [];
+            const fromCatalog = analytesForProgram.some(a => a.analyte === r.parameter);
+            return (
+              <div key={i} className="border rounded-md p-2 mb-1.5" style={{ borderColor: "#E1EBE8" }}>
+                <div className="flex items-center gap-2">
+                  {fromCatalog ? (
+                    <div className="flex-1 text-sm font-medium px-1">{r.parameter}</div>
+                  ) : (
+                    <input className={inputCls} style={{ ...inputStyle, flex: 1 }} value={r.parameter} onChange={e => updateBatchRow(i, { parameter: e.target.value })} placeholder="Analyte" />
+                  )}
+                  <input type="number" step="any" className={inputCls} style={{ ...inputStyle, width: 110 }} value={r.labResult} onChange={e => updateBatchRow(i, { labResult: e.target.value })} placeholder="Result" />
+                  {pastUnits.length > 0 ? (
+                    <select className={inputCls} style={{ ...inputStyle, width: 120 }} value={r.unit} onChange={e => updateBatchRow(i, { unit: e.target.value })}>
+                      <option value="">Unit…</option>
+                      {pastUnits.map(u => <option key={u} value={u}>{u}</option>)}
+                      <option value="__other__">Other…</option>
+                    </select>
+                  ) : (
+                    <input className={inputCls} style={{ ...inputStyle, width: 120 }} value={r.unit} onChange={e => updateBatchRow(i, { unit: e.target.value })} placeholder="Unit" />
+                  )}
+                  {r.unit === "__other__" && (
+                    <input className={inputCls} style={{ ...inputStyle, width: 100 }} value="" onChange={e => updateBatchRow(i, { unit: e.target.value })} placeholder="Type unit" autoFocus />
+                  )}
+                  <input type="number" step="any" className={inputCls} style={{ ...inputStyle, width: 90 }} value={r.peerMean} onChange={e => updateBatchRow(i, { peerMean: e.target.value })} placeholder="Peer mean" />
+                  <input type="number" step="any" className={inputCls} style={{ ...inputStyle, width: 90 }} value={r.peerSD} onChange={e => updateBatchRow(i, { peerSD: e.target.value })} placeholder="Peer SD" />
+                  <button onClick={() => removeBatchRow(i)} disabled={batchRows.length === 1} className="text-gray-300 hover:text-red-500 disabled:opacity-30 shrink-0"><Trash2 size={14} /></button>
+                </div>
               </div>
-              <div className="grid grid-cols-6 gap-2">
-                <div><div className="text-[10px] text-gray-400 mb-0.5">Run date</div><input type="date" className={inputCls} style={inputStyle} value={r.runDate} onChange={e => updateRow(i, { runDate: e.target.value })} /></div>
-                <div><div className="text-[10px] text-gray-400 mb-0.5">Due date</div><input type="date" className={inputCls} style={inputStyle} value={r.dueDate} onChange={e => updateRow(i, { dueDate: e.target.value })} /></div>
-                <div><div className="text-[10px] text-gray-400 mb-0.5">Received</div><input type="date" className={inputCls} style={inputStyle} value={r.dateReceived} onChange={e => updateRow(i, { dateReceived: e.target.value })} /></div>
-                <div><div className="text-[10px] text-gray-400 mb-0.5">Lab result</div><input type="number" step="any" className={inputCls} style={inputStyle} value={r.labResult} onChange={e => updateRow(i, { labResult: e.target.value })} /></div>
-                <div><div className="text-[10px] text-gray-400 mb-0.5">Peer mean</div><input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerMean} onChange={e => updateRow(i, { peerMean: e.target.value })} /></div>
-                <div><div className="text-[10px] text-gray-400 mb-0.5">Peer SD</div><input type="number" step="any" className={inputCls} style={inputStyle} value={r.peerSD} onChange={e => updateRow(i, { peerSD: e.target.value })} /></div>
-              </div>
-            </div>
-          ))}
-          <button onClick={addRow} className="text-xs flex items-center gap-1 mt-1" style={{ color: COLORS.teal }}><Plus size={12} /> Add another row</button>
+            );
+          })}
+          <button onClick={addBatchRow} className="text-xs flex items-center gap-1 mt-1" style={{ color: COLORS.teal }}><Plus size={12} /> Add an analyte not in the catalog</button>
         </div>
       )}
 
@@ -5075,7 +5120,7 @@ function EQAForm({ qcMachines, onSave, onCancel, laboratories, eqaPrograms, prog
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
         <button onClick={handleSave}
-          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Save {mode === "batch" ? `${rows.filter(r => r.parameter.trim() && r.labResult !== "").length} result(s)` : "EQA result"}</button>
+          className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Save size={14} /> Save {mode === "batch" ? `${batchRows.filter(r => r.parameter.trim() && r.labResult !== "").length} result(s)` : "EQA result"}</button>
       </div>
     </div>
   );
