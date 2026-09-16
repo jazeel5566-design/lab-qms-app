@@ -1101,7 +1101,7 @@ export default function App() {
     { id: "personnel", label: "Personnel", icon: Users },
     ...(canSeeAuditBackup ? [{ id: "mgmtreview", label: "Management review", icon: CheckCircle2 }] : []),
     ...(canSeeAuditBackup ? [{ id: "audit", label: "Audit & Backup", icon: History }] : []),
-    ...(isAdmin ? [{ id: "settings", label: "Settings", icon: KeyRound }] : []),
+    ...(isAdmin || isQaManager ? [{ id: "settings", label: "Settings", icon: KeyRound }] : []),
     { id: "manual", label: "User Manual", icon: BookOpen, href: "/Lab-QMS-User-Manual.pdf" },
   ];
 
@@ -1215,7 +1215,7 @@ export default function App() {
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} addManagementReview={addManagementReview}
           deleteManagementReview={deleteManagementReview} stats={stats} currentUser={currentUser} />}
         {tab === "audit" && canSeeAuditBackup && <AuditBackup />}
-        {tab === "settings" && isAdmin && <Settings qcMachines={qcMachines} updateQcMachines={updateQcMachines} currentUser={currentUser}
+        {tab === "settings" && (isAdmin || isQaManager) && <Settings qcMachines={qcMachines} updateQcMachines={updateQcMachines} currentUser={currentUser}
           notificationSettings={notificationSettings} toggleNotificationSettingAction={toggleNotificationSettingAction}
           laboratories={laboratories} createLaboratoryAction={createLaboratoryAction} activeLaboratoryId={activeLaboratoryId}
           qcParameters={qcParameters} updateQcParameters={updateQcParameters} qcControls={qcControls} updateQcControls={updateQcControls}
@@ -4692,7 +4692,7 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
     return eqaEvents
       .filter(e => e.parameter === trendParameter && e.sdi !== null && e.sdi !== undefined)
       .sort((a, b) => (a.dateReceived || "").localeCompare(b.dateReceived || ""))
-      .map(e => ({ date: e.dateReceived, sdi: Number(e.sdi) }));
+      .map(e => ({ date: e.dateReceived, runDate: e.runDate || "", value: e.labResult, unit: e.unit || "", sdi: Number(e.sdi) }));
   }, [eqaEvents, trendParameter]);
 
   /** Groups results by discipline + provider + cycle — the real-world "annual cycle" a set of monthly/quarterly samples belongs to — so performance can be reviewed at the cycle level, the way an EQA provider's own end-of-cycle report does, rather than one sample at a time. */
@@ -4804,7 +4804,17 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
                     <CartesianGrid strokeDasharray="3 3" stroke="#EEF3F1" />
                     <XAxis dataKey="date" tick={{ fontSize: 11 }} />
                     <YAxis domain={[-4, 4]} tick={{ fontSize: 11 }} />
-                    <Tooltip />
+                    <Tooltip content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const d = payload[0].payload;
+                      return (
+                        <div className="bg-white border rounded-md px-2 py-1.5 text-xs" style={{ borderColor: "#D8E5E1" }}>
+                          <div className="text-gray-400">{d.runDate ? `Run: ${d.runDate}` : `Received: ${d.date}`}</div>
+                          <div><strong>Value:</strong> {d.value}{d.unit ? ` ${d.unit}` : ""}</div>
+                          <div><strong>SDI:</strong> {d.sdi.toFixed(2)}</div>
+                        </div>
+                      );
+                    }} />
                     <ReferenceLine y={0} stroke="#9AA5A3" />
                     <ReferenceLine y={2} stroke={COLORS.amber} strokeDasharray="3 3" />
                     <ReferenceLine y={-2} stroke={COLORS.amber} strokeDasharray="3 3" />
