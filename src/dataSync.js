@@ -281,6 +281,7 @@ export const managementReviewFromDb = (row, personnel) => ({
   id: row.id,
   reviewDate: row.review_date || "",
   attendees: row.attendees || "",
+  venue: row.venue || "",
   metricsSnapshot: row.metrics_snapshot || null,
   inputsReviewed: row.inputs_reviewed || "",
   decisions: row.decisions || "",
@@ -292,12 +293,36 @@ export const managementReviewFromDb = (row, personnel) => ({
 export const managementReviewToDb = (m, personnel) => ({
   review_date: m.reviewDate || null,
   attendees: m.attendees || null,
+  venue: m.venue || null,
   metrics_snapshot: m.metricsSnapshot || null,
   inputs_reviewed: m.inputsReviewed || null,
   decisions: m.decisions || null,
   actions_arising: m.actionsArising || null,
   conducted_by: nameToId(personnel, m.conductedBy),
   laboratory_id: m.laboratoryId,
+});
+
+// ---------------- management_review_items (0046) ----------------
+export const managementReviewItemFromDb = (row) => ({
+  id: row.id,
+  managementReviewId: row.management_review_id,
+  agendaItem: row.agenda_item,
+  discussion: row.discussion || "",
+  decisions: row.decisions || "",
+  actionsArising: row.actions_arising || "",
+  responsiblePerson: row.responsible_person || "",
+  targetDate: row.target_date || "",
+  sortOrder: row.sort_order || 0,
+});
+export const managementReviewItemToDb = (i) => ({
+  management_review_id: i.managementReviewId,
+  agenda_item: i.agendaItem,
+  discussion: i.discussion || null,
+  decisions: i.decisions || null,
+  actions_arising: i.actionsArising || null,
+  responsible_person: i.responsiblePerson || null,
+  target_date: i.targetDate || null,
+  sort_order: i.sortOrder || 0,
 });
 
 // ---------------- competency_records ----------------

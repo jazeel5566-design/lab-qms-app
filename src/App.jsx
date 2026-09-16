@@ -44,7 +44,7 @@ import {
   machineFromDb, machineToDb, parameterFromDb, parameterToDb,
   controlFromDb, controlToDb, runFromDb, runToDb,
   eqaFromDb, eqaToDb, eqaProgramFromDb, eqaProgramToDb, programAnalyteFromDb, programAnalyteToDb, testCodeMappingFromDb, testCodeMappingToDb, documentFromDb, documentToDb,
-  riskFromDb, riskToDb, managementReviewFromDb, managementReviewToDb,
+  riskFromDb, riskToDb, managementReviewFromDb, managementReviewToDb, managementReviewItemFromDb, managementReviewItemToDb,
   acknowledgmentFromDb, downtimeFromDb, clauseEvidenceFromDb, taskCommentFromDb, taskTemplateFromDb,
   laboratoryFromDb, personnelLabFromDb,
 } from "./dataSync.js";
@@ -355,6 +355,7 @@ export default function App() {
   const [documents, setDocuments] = useState([]);
   const [risks, setRisks] = useState([]);
   const [managementReviews, setManagementReviews] = useState([]);
+  const [managementReviewItems, setManagementReviewItems] = useState([]);
   const [documentAcknowledgments, setDocumentAcknowledgments] = useState([]);
   const [equipmentDowntime, setEquipmentDowntime] = useState([]);
   const [clauseEvidence, setClauseEvidence] = useState([]);
@@ -396,7 +397,7 @@ export default function App() {
    * or later, once they've picked one from the login-time selector.
    */
   const loadLabScopedData = async (labId, p) => {
-    const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, progRows, analyteRows, mappingRows, docRows, riskRows, mrRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows] = await Promise.all([
+    const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, progRows, analyteRows, mappingRows, docRows, riskRows, mrRows, mriRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows] = await Promise.all([
       clauseApi.listClauseStatus(labId),
       taskApi.listTasks(labId),
       ncApi.listNonconformities(labId),
@@ -414,6 +415,7 @@ export default function App() {
       eqaDocApi.listDocuments(labId),
       riskApi.listRisks(labId),
       mgmtReviewApi.listManagementReviews(labId),
+      mgmtReviewApi.listManagementReviewItems(),
       ackApi.listAllAcknowledgments(labId),
       downtimeApi.listEquipmentDowntime(labId),
       clauseEvidenceApi.listClauseEvidence(labId),
@@ -443,6 +445,7 @@ export default function App() {
     setDocuments(docRows.map(r => documentFromDb(r, p)));
     setRisks(riskRows.map(r => riskFromDb(r, p)));
     setManagementReviews(mrRows.map(r => managementReviewFromDb(r, p)));
+    setManagementReviewItems(mriRows.map(managementReviewItemFromDb));
     setDocumentAcknowledgments(ackRows.map(r => acknowledgmentFromDb(r, p)));
     setEquipmentDowntime(dtRows.map(r => downtimeFromDb(r, p)));
     setClauseEvidence(ceRows.map(r => clauseEvidenceFromDb(r, p)));
@@ -786,16 +789,32 @@ export default function App() {
   });
 
   /** Management reviews are create/delete only — a review record is a dated snapshot, not something edited after the fact. */
+  /**
+   * Saves the review first to get its REAL database id (a client-side
+   * uid() is never that — same lesson as every other parent+children
+   * save this session), then creates each item against that real id.
+   */
   const addManagementReview = async (draft) => {
-    const dbRow = managementReviewToDb({ ...draft, conductedBy: currentUser.name, laboratoryId: activeLaboratoryId }, personnel);
+    const { items, ...reviewDraft } = draft;
+    const dbRow = managementReviewToDb({ ...reviewDraft, conductedBy: currentUser.name, laboratoryId: activeLaboratoryId }, personnel);
     const inserted = await mgmtReviewApi.createManagementReview(dbRow);
     const mapped = managementReviewFromDb(inserted, personnel);
     setManagementReviews(prev => [mapped, ...prev]);
+
+    const validItems = (items || []).filter(i => i.agendaItem?.trim());
+    const savedItems = [];
+    for (let idx = 0; idx < validItems.length; idx++) {
+      const itemRow = managementReviewItemToDb({ ...validItems[idx], managementReviewId: mapped.id, sortOrder: idx + 1 });
+      const insertedItem = await mgmtReviewApi.createManagementReviewItem(itemRow);
+      savedItems.push(managementReviewItemFromDb(insertedItem));
+    }
+    if (savedItems.length > 0) setManagementReviewItems(prev => [...savedItems, ...prev]);
     return mapped;
   };
   const deleteManagementReview = async (id) => {
     await mgmtReviewApi.deleteManagementReview(id);
     setManagementReviews(prev => prev.filter(m => m.id !== id));
+    setManagementReviewItems(prev => prev.filter(i => i.managementReviewId !== id)); // DB cascades; local state needs the same cleanup
   };
 
   /** Records that the CURRENT signed-in user has read a document — the personnel_id is always the caller's own, enforced server-side (0009 migration), so no one can acknowledge on someone else's behalf. */
@@ -1212,7 +1231,7 @@ export default function App() {
           documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords} />}
         {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canSeeAllStaff={canSeeAllStaff} canEdit={canEdit}
           laboratories={laboratories} personnelLaboratories={personnelLaboratories} assignPersonnelToLabAction={assignPersonnelToLabAction} unassignPersonnelFromLabAction={unassignPersonnelFromLabAction} />}
-        {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} addManagementReview={addManagementReview}
+        {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} managementReviewItems={managementReviewItems} addManagementReview={addManagementReview}
           deleteManagementReview={deleteManagementReview} stats={stats} currentUser={currentUser} />}
         {tab === "audit" && canSeeAuditBackup && <AuditBackup />}
         {tab === "settings" && (isAdmin || isQaManager) && <Settings qcMachines={qcMachines} updateQcMachines={updateQcMachines} currentUser={currentUser}
@@ -5975,7 +5994,7 @@ function GeneralDocumentForm({ onSave, onCancel }) {
 
 // ---------------- Audit log & backup export ----------------
 // ---------------- Management Review records (Clause 8.9) ----------------
-function ManagementReview({ managementReviews, addManagementReview, deleteManagementReview, stats, currentUser }) {
+function ManagementReview({ managementReviews, managementReviewItems, addManagementReview, deleteManagementReview, stats, currentUser }) {
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -5993,6 +6012,46 @@ function ManagementReview({ managementReviews, addManagementReview, deleteManage
     }
   };
 
+  // Chronological order — oldest first, matching how a real minute book reads front to back.
+  const sortedReviews = [...managementReviews].sort((a, b) => (a.reviewDate || "").localeCompare(b.reviewDate || ""));
+
+  const printManagementReview = (review, items) => {
+    const w = window.open("", "_blank");
+    if (!w) { alert("Please allow pop-ups for this site to print the report."); return; }
+    const rows = items.map((item, i) => `
+      <tr>
+        <td>${i + 1}</td>
+        <td>${escapeHtml(item.agendaItem)}</td>
+        <td>${escapeHtml(item.discussion || "")}</td>
+        <td>${escapeHtml([item.decisions, item.actionsArising].filter(Boolean).join(" "))}</td>
+        <td>${escapeHtml(item.responsiblePerson || "")}</td>
+        <td>${escapeHtml(item.targetDate || "")}</td>
+      </tr>`).join("");
+    w.document.write(`<!DOCTYPE html><html><head><title>Management Review — ${escapeHtml(review.reviewDate)}</title>
+      <style>
+        body { font-family: -apple-system, system-ui, sans-serif; padding: 32px; color: #12262B; }
+        h1 { font-size: 18px; margin-bottom: 4px; }
+        p.meta { color: #6B7A78; font-size: 12px; margin: 2px 0; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th, td { border: 1px solid #D8E5E1; padding: 6px 10px; font-size: 12px; text-align: left; vertical-align: top; }
+        th { background: #0F2A3D; color: white; }
+        tr:nth-child(even) td { background: #F6FAF9; }
+      </style></head>
+      <body>
+        <h1>Management Review Meeting</h1>
+        <p class="meta">Date: ${escapeHtml(review.reviewDate)}${review.venue ? ` &nbsp;|&nbsp; Venue: ${escapeHtml(review.venue)}` : ""}</p>
+        <p class="meta">Attendees: ${escapeHtml(review.attendees || "—")}</p>
+        <p class="meta">Conducted by: ${escapeHtml(review.conductedBy || "—")}</p>
+        <table>
+          <thead><tr><th>No.</th><th>Agenda Item</th><th>Discussion</th><th>Decisions / Actions Proposed</th><th>Responsible Person</th><th>Target Date</th></tr></thead>
+          <tbody>${rows || `<tr><td colspan="6">No items recorded.</td></tr>`}</tbody>
+        </table>
+      </body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+  };
+
   return (
     <div className="p-8 max-w-[1400px]">
       <div className="flex items-center justify-between mb-1">
@@ -6001,57 +6060,86 @@ function ManagementReview({ managementReviews, addManagementReview, deleteManage
           <Plus size={14} /> Record a review
         </button>
       </div>
-      <p className="text-sm text-gray-500 mb-4">A dated record of each management review meeting — not just live Dashboard data, but formal evidence that a review happened, what was discussed, and what was decided (Clause 8.9).</p>
+      <p className="text-sm text-gray-500 mb-4">A dated record of each management review meeting — not just live Dashboard data, but formal evidence that a review happened, what was discussed, and what was decided (Clause 8.9). Listed in chronological order.</p>
 
       {showForm && (
         <ManagementReviewForm stats={stats} onCancel={() => setShowForm(false)} onSave={handleSave} saving={saving} error={error} />
       )}
 
       <div className="space-y-3">
-        {managementReviews.length === 0 && <Empty text="No management reviews recorded yet." />}
-        {managementReviews.map(m => (
-          <div key={m.id} className="bg-white rounded-lg border" style={{ borderColor: "#E1EBE8" }}>
-            <button onClick={() => setExpanded(expanded === m.id ? null : m.id)} className="w-full flex items-center gap-3 px-5 py-3 text-left">
-              {expanded === m.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-              <span className="text-sm font-medium" style={{ color: COLORS.navy }}>{m.reviewDate}</span>
-              <span className="text-xs text-gray-400 flex-1 truncate">{m.attendees}</span>
-              <span className="text-xs text-gray-400">Conducted by {m.conductedBy}</span>
-            </button>
-            {expanded === m.id && (
-              <div className="px-5 pb-5 pt-1 border-t space-y-3" style={{ borderColor: "#EEF3F1" }}>
-                {m.metricsSnapshot && (
-                  <div className="mt-3 p-3 rounded-md text-xs" style={{ background: COLORS.mint }}>
-                    <div className="font-semibold mb-1" style={{ color: COLORS.navy }}>Metrics at time of review</div>
-                    <div className="grid grid-cols-3 gap-2 text-gray-600">
-                      <div>Clause compliance: {m.metricsSnapshot.compliancePct}%</div>
-                      <div>Open NCs: {m.metricsSnapshot.openNcs}</div>
-                      <div>Overdue tasks: {m.metricsSnapshot.overdueTasks}</div>
-                      <div>Non-conformant clauses: {m.metricsSnapshot.nonConformantClauses}</div>
-                      <div>Unauthorized IQC violations: {m.metricsSnapshot.iqcViolations}</div>
-                      <div>EQA unsatisfactory: {m.metricsSnapshot.eqaUnsatisfactory}</div>
+        {sortedReviews.length === 0 && <Empty text="No management reviews recorded yet." />}
+        {sortedReviews.map(m => {
+          const items = managementReviewItems.filter(i => i.managementReviewId === m.id).sort((a, b) => a.sortOrder - b.sortOrder);
+          return (
+            <div key={m.id} className="bg-white rounded-lg border" style={{ borderColor: "#E1EBE8" }}>
+              <button onClick={() => setExpanded(expanded === m.id ? null : m.id)} className="w-full flex items-center gap-3 px-5 py-3 text-left">
+                {expanded === m.id ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                <span className="text-sm font-medium" style={{ color: COLORS.navy }}>{m.reviewDate}</span>
+                {m.venue && <span className="text-xs text-gray-400">{m.venue}</span>}
+                <span className="text-xs text-gray-400 flex-1 truncate">{m.attendees}</span>
+                <span className="text-xs text-gray-400">Conducted by {m.conductedBy}</span>
+                {items.length > 0 && <Badge color={COLORS.teal}>{items.length} item{items.length !== 1 ? "s" : ""} reviewed</Badge>}
+              </button>
+              {expanded === m.id && (
+                <div className="px-5 pb-5 pt-1 border-t space-y-3" style={{ borderColor: "#EEF3F1" }}>
+                  {m.metricsSnapshot && (
+                    <div className="mt-3 p-3 rounded-md text-xs" style={{ background: COLORS.mint }}>
+                      <div className="font-semibold mb-1" style={{ color: COLORS.navy }}>Metrics at time of review</div>
+                      <div className="grid grid-cols-3 gap-2 text-gray-600">
+                        <div>Clause compliance: {m.metricsSnapshot.compliancePct}%</div>
+                        <div>Open NCs: {m.metricsSnapshot.openNcs}</div>
+                        <div>Overdue tasks: {m.metricsSnapshot.overdueTasks}</div>
+                        <div>Non-conformant clauses: {m.metricsSnapshot.nonConformantClauses}</div>
+                        <div>Unauthorized IQC violations: {m.metricsSnapshot.iqcViolations}</div>
+                        <div>EQA unsatisfactory: {m.metricsSnapshot.eqaUnsatisfactory}</div>
+                      </div>
                     </div>
+                  )}
+
+                  {items.length > 0 ? (
+                    <div className="border rounded-md overflow-x-auto" style={{ borderColor: "#EEF3F1" }}>
+                      <table className="w-full text-xs" style={{ minWidth: 700 }}>
+                        <thead>
+                          <tr className="border-b" style={{ borderColor: "#EEF3F1" }}>
+                            {["No.", "Agenda item", "Discussion", "Decisions", "Actions arising", "Responsible", "Target date"].map(h => (
+                              <th key={h} className="text-left font-medium text-gray-400 px-3 py-2 whitespace-nowrap">{h}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {items.map((item, i) => (
+                            <tr key={item.id} className="border-b align-top" style={{ borderColor: "#EEF3F1" }}>
+                              <td className="px-3 py-2 text-gray-400">{i + 1}</td>
+                              <td className="px-3 py-2 font-medium">{item.agendaItem}</td>
+                              <td className="px-3 py-2 text-gray-600">{item.discussion || "—"}</td>
+                              <td className="px-3 py-2 text-gray-600">{item.decisions || "—"}</td>
+                              <td className="px-3 py-2 text-gray-600">{item.actionsArising || "—"}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{item.responsiblePerson || "—"}</td>
+                              <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{item.targetDate || "—"}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (m.inputsReviewed || m.decisions || m.actionsArising) ? (
+                    <>
+                      <div><div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>Inputs reviewed</div><div className="text-sm text-gray-600 whitespace-pre-wrap">{m.inputsReviewed || "—"}</div></div>
+                      <div><div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>Decisions</div><div className="text-sm text-gray-600 whitespace-pre-wrap">{m.decisions || "—"}</div></div>
+                      <div><div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>Actions arising</div><div className="text-sm text-gray-600 whitespace-pre-wrap">{m.actionsArising || "—"}</div></div>
+                    </>
+                  ) : (
+                    <Empty text="No items recorded for this review." />
+                  )}
+
+                  <div className="flex justify-end gap-3">
+                    <button onClick={() => printManagementReview(m, items)} className="text-xs flex items-center gap-1" style={{ color: COLORS.teal }}><Download size={12} /> Print / Save as PDF</button>
+                    <button onClick={() => deleteManagementReview(m.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Delete record</button>
                   </div>
-                )}
-                <div>
-                  <div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>Inputs reviewed</div>
-                  <div className="text-sm text-gray-600 whitespace-pre-wrap">{m.inputsReviewed || "—"}</div>
                 </div>
-                <div>
-                  <div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>Decisions</div>
-                  <div className="text-sm text-gray-600 whitespace-pre-wrap">{m.decisions || "—"}</div>
-                </div>
-                <div>
-                  <div className="text-xs font-medium mb-1" style={{ color: COLORS.navy }}>Actions arising</div>
-                  <div className="text-sm text-gray-600 whitespace-pre-wrap">{m.actionsArising || "—"}</div>
-                  <div className="text-[11px] text-gray-400 mt-1">Individual action items should also be created as Tasks so they're tracked to completion, not just noted here.</div>
-                </div>
-                <div className="flex justify-end">
-                  <button onClick={() => deleteManagementReview(m.id)} className="text-xs text-red-400 flex items-center gap-1"><Trash2 size={12} /> Delete record</button>
-                </div>
-              </div>
-            )}
-          </div>
-        ))}
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -6059,10 +6147,14 @@ function ManagementReview({ managementReviews, addManagementReview, deleteManage
 
 function ManagementReviewForm({ stats, onSave, onCancel, saving, error }) {
   const [reviewDate, setReviewDate] = useState(todayISO());
+  const [venue, setVenue] = useState("");
   const [attendees, setAttendees] = useState("");
-  const [inputsReviewed, setInputsReviewed] = useState("");
-  const [decisions, setDecisions] = useState("");
-  const [actionsArising, setActionsArising] = useState("");
+
+  const blankItem = () => ({ agendaItem: "", discussion: "", decisions: "", actionsArising: "", responsiblePerson: "", targetDate: "" });
+  const [items, setItems] = useState([blankItem()]);
+  const updateItem = (i, patch) => setItems(prev => prev.map((it, idx) => idx === i ? { ...it, ...patch } : it));
+  const addItem = () => setItems(prev => [...prev, blankItem()]);
+  const removeItem = (i) => setItems(prev => prev.filter((_, idx) => idx !== i));
 
   const compliancePct = stats.totalClauses ? Math.round((stats.counts["Compliant"] / stats.totalClauses) * 100) : 0;
   const snapshot = {
@@ -6074,10 +6166,13 @@ function ManagementReviewForm({ stats, onSave, onCancel, saving, error }) {
     eqaUnsatisfactory: stats.eqaUnsatisfactory,
   };
 
+  const validCount = items.filter(i => i.agendaItem.trim()).length;
+
   return (
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: "#E1EBE8" }}>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-3 gap-3">
         <Field label="Review date"><input type="date" className={inputCls} style={inputStyle} value={reviewDate} onChange={e => setReviewDate(e.target.value)} /></Field>
+        <Field label="Venue"><input className={inputCls} style={inputStyle} value={venue} onChange={e => setVenue(e.target.value)} placeholder="e.g. DH Meeting Room" /></Field>
         <Field label="Attendees"><input className={inputCls} style={inputStyle} value={attendees} onChange={e => setAttendees(e.target.value)} placeholder="Names / roles present" /></Field>
       </div>
       <div className="p-3 rounded-md text-xs mb-3" style={{ background: COLORS.mint }}>
@@ -6091,15 +6186,48 @@ function ManagementReviewForm({ stats, onSave, onCancel, saving, error }) {
           <div>EQA unsatisfactory: {snapshot.eqaUnsatisfactory}</div>
         </div>
       </div>
-      <Field label="Inputs reviewed"><textarea className={inputCls} style={inputStyle} rows={2} value={inputsReviewed} onChange={e => setInputsReviewed(e.target.value)} placeholder="NC trends, IQC/EQA performance, audit results, staff feedback, previous action follow-up, etc." /></Field>
-      <Field label="Decisions"><textarea className={inputCls} style={inputStyle} rows={2} value={decisions} onChange={e => setDecisions(e.target.value)} /></Field>
-      <Field label="Actions arising"><textarea className={inputCls} style={inputStyle} rows={2} value={actionsArising} onChange={e => setActionsArising(e.target.value)} placeholder="Summary here — create the individual items as Tasks too" /></Field>
+
+      <div className="text-xs font-medium text-gray-500 mb-1">Inputs reviewed — one entry per agenda item, each with its own discussion and outcome</div>
+      {items.map((it, i) => (
+        <div key={i} className="border rounded-md p-3 mb-2" style={{ borderColor: "#E1EBE8" }}>
+          <div className="flex items-center gap-2 mb-2">
+            <input className={inputCls} style={{ ...inputStyle, flex: 1, fontWeight: 500 }} value={it.agendaItem} onChange={e => updateItem(i, { agendaItem: e.target.value })} placeholder="Agenda item / input reviewed (e.g. Internal Audit Findings)" />
+            <button onClick={() => removeItem(i)} disabled={items.length === 1} className="text-gray-300 hover:text-red-500 disabled:opacity-30 shrink-0"><Trash2 size={14} /></button>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div>
+              <div className="text-[10px] text-gray-400 mb-0.5">Discussion</div>
+              <textarea className={inputCls} style={inputStyle} rows={2} value={it.discussion} onChange={e => updateItem(i, { discussion: e.target.value })} placeholder="What was discussed" />
+            </div>
+            <div>
+              <div className="text-[10px] text-gray-400 mb-0.5">Decisions</div>
+              <textarea className={inputCls} style={inputStyle} rows={2} value={it.decisions} onChange={e => updateItem(i, { decisions: e.target.value })} placeholder="What was decided" />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="col-span-1">
+              <div className="text-[10px] text-gray-400 mb-0.5">Actions arising</div>
+              <textarea className={inputCls} style={inputStyle} rows={1} value={it.actionsArising} onChange={e => updateItem(i, { actionsArising: e.target.value })} placeholder="Follow-up action(s)" />
+            </div>
+            <div>
+              <div className="text-[10px] text-gray-400 mb-0.5">Responsible person</div>
+              <input className={inputCls} style={inputStyle} value={it.responsiblePerson} onChange={e => updateItem(i, { responsiblePerson: e.target.value })} placeholder="Who's responsible" />
+            </div>
+            <div>
+              <div className="text-[10px] text-gray-400 mb-0.5">Target date</div>
+              <input className={inputCls} style={inputStyle} value={it.targetDate} onChange={e => updateItem(i, { targetDate: e.target.value })} placeholder="e.g. 15-Sep-26, Ongoing" />
+            </div>
+          </div>
+        </div>
+      ))}
+      <button onClick={addItem} className="text-xs flex items-center gap-1 mb-3" style={{ color: COLORS.teal }}><Plus size={12} /> Add another input reviewed</button>
+
       {error && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{error}</div>}
       <div className="flex justify-end gap-2 mt-2">
         <button onClick={onCancel} className="text-sm px-3 py-1.5 text-gray-500">Cancel</button>
-        <button disabled={saving} onClick={() => onSave({ reviewDate, attendees, metricsSnapshot: snapshot, inputsReviewed, decisions, actionsArising })}
+        <button disabled={saving || validCount === 0} onClick={() => onSave({ reviewDate, venue, attendees, metricsSnapshot: snapshot, items })}
           className="text-sm px-4 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-50" style={{ background: COLORS.teal }}>
-          <Save size={14} /> {saving ? "Saving…" : "Save review record"}
+          <Save size={14} /> {saving ? "Saving…" : `Save review record (${validCount} item${validCount !== 1 ? "s" : ""})`}
         </button>
       </div>
     </div>
