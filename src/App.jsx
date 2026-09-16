@@ -6404,8 +6404,8 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
 
   const SETTINGS_TABS = [
     { id: "general", label: "General" },
-    { id: "machines", label: "Configure machines" },
-    { id: "interface", label: "Interface engine" },
+    ...(isAdmin ? [{ id: "machines", label: "Configure machines" }] : []),
+    ...(isAdmin ? [{ id: "interface", label: "Interface engine" }] : []),
     { id: "personnel", label: "Personnel" },
     { id: "iqc", label: "IQC configuration" },
     { id: "eqas", label: "EQAS configuration" },
@@ -6532,7 +6532,7 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
         </>
       )}
 
-      {settingsTab === "machines" && (
+      {settingsTab === "machines" && isAdmin && (
         <>
           <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
             <div className="flex items-center justify-between mb-1">
@@ -6568,7 +6568,7 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
         </>
       )}
 
-      {settingsTab === "interface" && (
+      {settingsTab === "interface" && isAdmin && (
         <>
           <div className="bg-white rounded-lg border p-5 mb-6" style={{ borderColor: "#E1EBE8" }}>
             <div className="text-sm font-semibold mb-1" style={{ color: COLORS.navy }}>How this connects to an interface engine (e.g. Mirth Connect)</div>
