@@ -5167,6 +5167,14 @@ function EqasProgramConfig({ laboratories, eqaPrograms, updateEqaPrograms, progr
   const [newAnalyteFor, setNewAnalyteFor] = useState(null);
   const [newAnalyteText, setNewAnalyteText] = useState("");
 
+  const [showStartCycle, setShowStartCycle] = useState(false);
+  const [sourceProgramId, setSourceProgramId] = useState("");
+  const [nextCycle, setNextCycle] = useState("");
+  const [nextStart, setNextStart] = useState("");
+  const [nextEnd, setNextEnd] = useState("");
+  const [startCycleError, setStartCycleError] = useState("");
+  const [startingCycle, setStartingCycle] = useState(false);
+
   const programsHere = eqaPrograms.filter(p => p.laboratoryId === labId);
 
   const addProgram = () => {
@@ -5183,6 +5191,44 @@ function EqasProgramConfig({ laboratories, eqaPrograms, updateEqaPrograms, progr
     setNewAnalyteText(""); setNewAnalyteFor(null);
   };
   const removeAnalyte = (id) => updateProgramAnalytes(programAnalytes.filter(a => a.id !== id));
+
+  const sourceProgram = programsHere.find(p => p.id === sourceProgramId);
+
+  /**
+   * Creates a new cycle of the same program (same provider/program name)
+   * and copies every analyte from the old cycle across — the whole
+   * point being nothing has to be re-typed when a cycle simply rolls
+   * over. Units aren't stored on the catalog itself, so there's nothing
+   * to copy there directly — but since the "remembered units" dropdown
+   * when logging a result looks units up by analyte NAME (not by which
+   * program/cycle it came from), it already offers the same units for
+   * these same analyte names automatically once results start coming
+   * in against the new cycle.
+   */
+  const handleStartNewCycle = async () => {
+    if (!sourceProgram || !nextCycle.trim()) return;
+    setStartingCycle(true); setStartCycleError("");
+    try {
+      const newProgramDraft = {
+        id: uid(), laboratoryId: labId, provider: sourceProgram.provider, programName: sourceProgram.programName,
+        cycle: nextCycle.trim(), startDate: nextStart, endDate: nextEnd,
+      };
+      const synced = await updateEqaPrograms([newProgramDraft, ...eqaPrograms]);
+      if (!synced) return; // failure already alerted by updateEqaPrograms
+      const created = synced.find(p => p.provider === newProgramDraft.provider && p.programName === newProgramDraft.programName && p.cycle === newProgramDraft.cycle);
+      if (!created) { setStartCycleError("Created, but couldn't confirm its id to copy analytes across — check the list below and add them manually if needed."); return; }
+
+      const sourceAnalytes = programAnalytes.filter(a => a.programId === sourceProgram.id).sort((a, b) => a.sortOrder - b.sortOrder);
+      const copies = sourceAnalytes.map(a => ({ id: uid(), programId: created.id, analyte: a.analyte, sortOrder: a.sortOrder }));
+      if (copies.length > 0) await updateProgramAnalytes([...copies, ...programAnalytes]);
+
+      setShowStartCycle(false); setSourceProgramId(""); setNextCycle(""); setNextStart(""); setNextEnd("");
+    } catch (e) {
+      setStartCycleError(e.message);
+    } finally {
+      setStartingCycle(false);
+    }
+  };
 
   return (
     <div>
@@ -5203,6 +5249,38 @@ function EqasProgramConfig({ laboratories, eqaPrograms, updateEqaPrograms, progr
           <div><div className="text-[10px] text-gray-400 mb-0.5">End date</div><input type="date" className={inputCls} style={inputStyle} value={newEnd} onChange={e => setNewEnd(e.target.value)} /></div>
         </div>
         <button onClick={addProgram} className="text-xs px-3 py-1.5 rounded-md text-white flex items-center gap-1" style={{ background: COLORS.teal }}><Plus size={12} /> Add program</button>
+      </div>
+
+      <div className="border rounded-md p-3 mb-4" style={{ borderColor: "#E1EBE8" }}>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-medium text-gray-500">Cycle ended? Start the next one without re-typing analytes</div>
+          <button onClick={() => setShowStartCycle(v => !v)} className="text-xs px-3 py-1.5 rounded-md border flex items-center gap-1" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+            <Plus size={12} /> Start new cycle
+          </button>
+        </div>
+        {showStartCycle && (
+          <>
+            <p className="text-xs text-gray-500 mb-2">Pick an existing program below — every analyte it already has is copied straight into the new cycle.</p>
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              <select className={inputCls} style={inputStyle} value={sourceProgramId} onChange={e => setSourceProgramId(e.target.value)}>
+                <option value="">Select a program to roll over…</option>
+                {programsHere.map(p => <option key={p.id} value={p.id}>{p.provider} — {p.programName} (Cycle {p.cycle})</option>)}
+              </select>
+              <input className={inputCls} style={inputStyle} value={nextCycle} onChange={e => setNextCycle(e.target.value)} placeholder="New cycle (e.g. 25)" />
+              <div />
+              <div><div className="text-[10px] text-gray-400 mb-0.5">New start date</div><input type="date" className={inputCls} style={inputStyle} value={nextStart} onChange={e => setNextStart(e.target.value)} /></div>
+              <div><div className="text-[10px] text-gray-400 mb-0.5">New end date</div><input type="date" className={inputCls} style={inputStyle} value={nextEnd} onChange={e => setNextEnd(e.target.value)} /></div>
+            </div>
+            {sourceProgram && (
+              <div className="text-xs text-gray-400 mb-2">Will copy {programAnalytes.filter(a => a.programId === sourceProgram.id).length} analyte(s) from Cycle {sourceProgram.cycle} into the new Cycle {nextCycle || "…"}.</div>
+            )}
+            {startCycleError && <div className="text-xs mb-2" style={{ color: COLORS.red }}>{startCycleError}</div>}
+            <button onClick={handleStartNewCycle} disabled={startingCycle || !sourceProgram || !nextCycle.trim()}
+              className="text-xs px-3 py-1.5 rounded-md text-white flex items-center gap-1 disabled:opacity-40" style={{ background: COLORS.teal }}>
+              {startingCycle ? "Creating…" : "Create new cycle"}
+            </button>
+          </>
+        )}
       </div>
 
       <div className="text-xs font-medium text-gray-500 mb-2">Existing programs</div>
