@@ -1308,7 +1308,7 @@ function Dashboard({ stats, tasks, ncs, personnel, setTab, competency, equipment
   };
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Quality management overview</h1>
         <button onClick={printDashboardSnapshot} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
@@ -1500,7 +1500,7 @@ function ClauseRegister({ clauseStatus, updateClauseStatus, personnel, tasks, up
   };
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Clause register</h1>
       <p className="text-sm text-gray-500 mb-1">Track compliance status, ownership, and review dates for every clause of ISO 15189:2022.</p>
       {!canManageClauseStatus && <p className="text-xs text-gray-400 mb-6">Compliance assessment is limited to the Admin, QA Manager, and their deputies — you can view every clause here, but not change its status, owner, or evidence.</p>}
@@ -1679,7 +1679,7 @@ function Tasks({ tasks, updateTasks, setTaskStatusAction, approveTaskCompletionA
   );
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Tasks</h1>
         {canAssignTasks && (
@@ -2030,7 +2030,7 @@ function NCRegister({ ncs, updateNcs, personnel, canEdit, notificationSettings, 
   };
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Non-conformities & CAPA</h1>
         <div className="flex gap-2">
@@ -2557,7 +2557,7 @@ function Personnel({ personnel, setPersonnel, updatePersonnel, currentUser, isAd
   };
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Personnel</h1>
       <p className="text-sm text-gray-500 mb-4">Laboratory staff available for clause ownership, task assignment, and NC investigation. Record Card Number is each person's sign-in username.</p>
 
@@ -2847,7 +2847,7 @@ function RiskRegister({ risks, updateRisks, personnel, canEdit, activeLaboratory
     });
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Risk register</h1>
         {canEdit && (
@@ -3024,7 +3024,7 @@ function Competency({ competency, updateCompetency, personnel, canEdit, currentU
   }, [competency]);
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Staff competency & training</h1>
         <div className="flex gap-2">
@@ -3257,7 +3257,7 @@ function Equipment({ equipment, updateEquipment, equipmentRecords, updateEquipme
   };
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Equipment records</h1>
         {canEdit && (
@@ -3754,7 +3754,7 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
    * chart image, consistent with every other report in this app.
    */
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>IQC & Levey-Jennings</h1>
         {canEdit && (
@@ -4734,7 +4734,7 @@ function EQAPage({ eqaEvents, updateEqaEvents, qcMachines, canEdit, ncs, createN
   }, [filtered]);
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>External Quality Assessment (EQAS)</h1>
         <div className="flex gap-2">
@@ -5631,7 +5631,7 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
   ];
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Documents</h1>
       <p className="text-xs text-gray-400 mb-4">Upload a file directly, or paste a link to wherever it's already stored (Drive, SharePoint, etc.) — either works for any document below.</p>
 
@@ -6131,7 +6131,7 @@ function ManagementReview({ managementReviews, managementReviewItems, addManagem
   };
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <div className="flex items-center justify-between mb-1">
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>Management review</h1>
         <button onClick={() => setShowForm(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
@@ -6404,7 +6404,7 @@ function AuditBackup() {
   };
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Audit log & backup</h1>
       <p className="text-sm text-gray-500 mb-6">Every create, update, and delete across the system, written automatically by a database trigger and attributed to whoever was signed in — plus a full data export.</p>
 
@@ -6618,7 +6618,7 @@ function Settings({ qcMachines, updateQcMachines, currentUser, notificationSetti
   ];
 
   return (
-    <div className="p-8 max-w-[1400px]">
+    <div className="p-8 w-full">
       <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>Settings</h1>
       <p className="text-sm text-gray-500 mb-4">Admin-only configuration for Lab QMS.</p>
 
