@@ -6,12 +6,12 @@ import { supabase, functionErrorMessage } from "../supabaseClient.js";
  * own browser session is never disturbed (see that function's header comment
  * for why this can't just be a plain supabase.auth.signUp() call from here).
  */
-export async function adminCreateStaff({ name, jobTitle, email, recordCardNumber, password, accessRole }) {
+export async function adminCreateStaff({ name, jobTitle, email, recordCardNumber, password, accessRole, laboratoryId }) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error("Not signed in.");
 
   const { data, error } = await supabase.functions.invoke("admin-create-staff", {
-    body: { name, jobTitle, email, recordCardNumber, password, accessRole },
+    body: { name, jobTitle, email, recordCardNumber, password, accessRole, laboratoryId },
   });
   if (error) throw new Error(await functionErrorMessage(error));
   if (data?.error) throw new Error(data.error);
