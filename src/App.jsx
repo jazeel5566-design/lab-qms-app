@@ -3821,16 +3821,22 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
         <h1 className="text-2xl font-semibold" style={{ color: COLORS.navy }}>IQC & Levey-Jennings</h1>
         {canEdit && (
           <div className="flex gap-2">
-            <button onClick={() => setShowCsvImport(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+            <button onClick={() => setShowCsvImport(v => !v)} disabled={!selectedMachineId}
+              title={!selectedMachineId ? "Select a machine first — CSV import is machine-specific" : ""}
+              className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
               <Upload size={14} /> Bulk import results (CSV)
             </button>
             <button onClick={() => setShowIqcReportPicker(v => !v)} className="text-sm flex items-center gap-1 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
               <Download size={14} /> Summary report
             </button>
-            <button onClick={() => setShowReceiveLot(true)} className="text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-md border" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+            <button onClick={() => setShowReceiveLot(true)} disabled={!selectedMachineId}
+              title={!selectedMachineId ? "Select a machine first" : ""}
+              className="text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-md border disabled:opacity-40 disabled:cursor-not-allowed" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
               <Plus size={14} /> Receive QC lot
             </button>
-            <button onClick={() => setShowNewEntry(true)} className="text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>
+            <button onClick={() => setShowNewEntry(true)} disabled={!selectedMachineId}
+              title={!selectedMachineId ? "Select a machine first" : ""}
+              className="text-sm flex items-center gap-1.5 px-3 py-1.5 rounded-md text-white disabled:opacity-40 disabled:cursor-not-allowed" style={{ background: COLORS.teal }}>
               <Plus size={14} /> New entry
             </button>
           </div>
@@ -3863,48 +3869,44 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
         </div>
       )}
 
-      {showCsvImport && canEdit && (
-        <IQCCsvImport
-          qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} personnel={personnel}
-          onImport={bulkImportQcRuns} onClose={() => setShowCsvImport(false)} activeLaboratoryId={activeLaboratoryId}
-        />
-      )}
-
       <p className="text-xs text-gray-400 -mb-2">To add machines, parameters, or control levels, use Settings → Configure machines / IQC configuration.</p>
 
-      {/* Filter bar — narrows both the machine tabs below and the results table further down */}
+      {/* Step 1 (required): discipline just narrows the machine list; the machine itself must be picked
+          explicitly — nothing below (filters, results, entry, or CSV import) is machine-agnostic. */}
       <div className="flex flex-wrap gap-2 my-4">
         <select value={filterDiscipline} onChange={e => { setFilterDiscipline(e.target.value); setSelectedMachineId(null); }} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
           <option value="All">All disciplines</option>{DISCIPLINES.map(d => <option key={d}>{d}</option>)}
         </select>
-        <select value={selectedMachineId || "All"} onChange={e => setSelectedMachineId(e.target.value === "All" ? null : e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
-          <option value="All">Select a machine…</option>
+        <select value={selectedMachineId || ""} onChange={e => setSelectedMachineId(e.target.value || null)} className="text-xs border rounded-md px-2 py-1.5 font-medium" style={{ borderColor: selectedMachineId ? COLORS.teal : "#D8E5E1", color: selectedMachineId ? COLORS.teal : COLORS.ink }}>
+          <option value="">Select a machine… (required)</option>
           {qcMachines.filter(m => filterDiscipline === "All" || m.discipline === filterDiscipline).map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
-        </select>
-        <select value={filterMaterial} onChange={e => { setFilterMaterial(e.target.value); setFilterLot("All"); }} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
-          <option value="All">All QC materials</option>{materialOptions.map(m => <option key={m}>{m}</option>)}
-        </select>
-        <select value={filterLot} onChange={e => setFilterLot(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
-          <option value="All">All lot numbers</option>{lotOptions.map(l => <option key={l}>{l}</option>)}
-        </select>
-        <select value={filterLevel} onChange={e => setFilterLevel(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
-          <option value="All">All levels</option>{CONTROL_LEVELS.map(l => <option key={l}>{l}</option>)}
         </select>
       </div>
 
       {qcMachines.length === 0 && <Empty text="No analysers added yet — add one from Settings → Configure machines." />}
 
-      {showNewEntry && canEdit && (
+      {qcMachines.length > 0 && !selectedMachine && (
+        <Empty text="Select a machine above to view its IQC results, log entries, or import a CSV — IQC is tracked per analyser, so nothing loads until one is chosen." />
+      )}
+
+      {showNewEntry && canEdit && selectedMachineId && (
         <NewIQCEntryPopup
           qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} personnel={personnel}
           defaultMachineId={selectedMachineId} onSaveBatch={addRunsBatch} onClose={() => setShowNewEntry(false)}
         />
       )}
 
-      {showReceiveLot && canEdit && (
+      {showReceiveLot && canEdit && selectedMachineId && (
         <ReceiveQcLotPopup
           qcMachines={qcMachines} qcParameters={qcParameters} qcControls={qcControls} updateQcControls={updateQcControls}
           defaultMachineId={selectedMachineId} activeLaboratoryId={activeLaboratoryId} onClose={() => setShowReceiveLot(false)}
+        />
+      )}
+
+      {showCsvImport && canEdit && selectedMachine && (
+        <IQCCsvImport
+          machine={selectedMachine} qcParameters={qcParameters} qcControls={qcControls} personnel={personnel}
+          onImport={bulkImportQcRuns} onClose={() => setShowCsvImport(false)} activeLaboratoryId={activeLaboratoryId}
         />
       )}
 
@@ -3922,6 +3924,20 @@ function IQCPage({ qcMachines, updateQcMachines, qcParameters, updateQcParameter
                 </div>
               )}
             </div>
+          </div>
+
+          {/* Step 2: material/lot/level only appear once a machine is selected, and only ever
+              narrow within that machine's own controls — never across machines. */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            <select value={filterMaterial} onChange={e => { setFilterMaterial(e.target.value); setFilterLot("All"); }} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+              <option value="All">All QC materials</option>{materialOptions.map(m => <option key={m}>{m}</option>)}
+            </select>
+            <select value={filterLot} onChange={e => setFilterLot(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+              <option value="All">All lot numbers</option>{lotOptions.map(l => <option key={l}>{l}</option>)}
+            </select>
+            <select value={filterLevel} onChange={e => setFilterLevel(e.target.value)} className="text-xs border rounded-md px-2 py-1.5" style={{ borderColor: "#D8E5E1" }}>
+              <option value="All">All levels</option>{CONTROL_LEVELS.map(l => <option key={l}>{l}</option>)}
+            </select>
           </div>
 
           <div className="bg-white rounded-lg border overflow-x-auto" style={{ borderColor: "#E1EBE8" }}>
@@ -4346,27 +4362,34 @@ function ReceiveQcLotPopup({ qcMachines, qcParameters, qcControls, updateQcContr
   );
 }
 
-// ---------------- Bulk CSV import for IQC results (any mix of parameters/machines) ----------------
-function IQCCsvImport({ qcMachines, qcParameters, qcControls, personnel, onImport, onClose, activeLaboratoryId }) {
+// ---------------- Bulk CSV import for IQC results — scoped to ONE machine ----------------
+// Deliberately takes a single fixed `machine`, not the whole qcMachines list — the page
+// only ever opens this once a machine has been selected, and every row in the file is
+// matched against ONLY that machine's own parameters/controls. There is no "Machine"
+// column in the template any more: importing for the wrong analyser by mistyping a name
+// in a spreadsheet cell is exactly the mistake this is meant to prevent.
+function IQCCsvImport({ machine, qcParameters, qcControls, personnel, onImport, onClose, activeLaboratoryId }) {
   const fileRef = useRef(null);
   const [rows, setRows] = useState([]);
   const [fileName, setFileName] = useState("");
   const [importing, setImporting] = useState(false);
   const [resultMsg, setResultMsg] = useState("");
 
+  const paramsForMachine = qcParameters.filter(p => p.machineId === machine.id);
+  const controlsForMachine = qcControls.filter(c => paramsForMachine.some(p => p.id === c.parameterId));
+
   const downloadTemplate = () => {
-    const headers = ["Machine", "Parameter", "Level", "Lot Number", "Date", "Time", "Value", "Operator", "Comment"];
-    const sample = qcControls.slice(0, 3).map(c => {
-      const param = qcParameters.find(p => p.id === c.parameterId);
-      const machine = qcMachines.find(m => m.id === param?.machineId);
-      return [machine?.name || "MachineName", param?.name || "ParameterName", c.level, c.lotNumber, todayISO(), "", "", "", ""];
+    const headers = ["Parameter", "Level", "Lot Number", "Date", "Time", "Value", "Operator", "Comment"];
+    const sample = controlsForMachine.slice(0, 3).map(c => {
+      const param = paramsForMachine.find(p => p.id === c.parameterId);
+      return [param?.name || "ParameterName", c.level, c.lotNumber, todayISO(), "", "", "", ""];
     });
     const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
     const lines = [headers.map(escape).join(","), ...sample.map(r => r.map(escape).join(","))];
     const blob = new Blob([lines.join("\n")], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = "iqc-bulk-import-template.csv"; a.click();
+    a.href = url; a.download = `iqc-bulk-import-template-${machine.name.replace(/[^a-zA-Z0-9]+/g, "-")}.csv`; a.click();
     URL.revokeObjectURL(url);
   };
 
@@ -4382,7 +4405,6 @@ function IQCCsvImport({ qcMachines, qcParameters, qcControls, personnel, onImpor
       const parsed = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
       const withStatus = parsed.map((row) => {
-        const machineName = cellGet(row, "Machine", "machine");
         const paramName = cellGet(row, "Parameter", "parameter");
         const level = cellGet(row, "Level", "level");
         const lot = cellGet(row, "Lot Number", "LotNumber", "lot number", "lot");
@@ -4392,20 +4414,18 @@ function IQCCsvImport({ qcMachines, qcParameters, qcControls, personnel, onImpor
         const operator = cellGet(row, "Operator", "operator");
         const comment = cellGet(row, "Comment", "comment");
 
-        const machine = qcMachines.find(m => m.name.trim().toLowerCase() === String(machineName).trim().toLowerCase());
-        if (!machine) return { raw: row, status: "error", reason: `Machine "${machineName}" not found` };
-        const param = qcParameters.find(p => p.machineId === machine.id && p.name.trim().toLowerCase() === String(paramName).trim().toLowerCase());
+        const param = paramsForMachine.find(p => p.name.trim().toLowerCase() === String(paramName).trim().toLowerCase());
         if (!param) return { raw: row, status: "error", reason: `Parameter "${paramName}" not found under ${machine.name}` };
-        const paramControls = qcControls.filter(c => c.parameterId === param.id);
+        const paramControls = controlsForMachine.filter(c => c.parameterId === param.id);
         let control = lot ? paramControls.find(c => (c.lotNumber || "").trim().toLowerCase() === String(lot).trim().toLowerCase()) : null;
         if (!control && level) control = paramControls.find(c => c.level === String(level).trim());
-        if (!control) return { raw: row, status: "error", reason: `No control level/lot match for ${param.name} (check Level or Lot Number)` };
+        if (!control) return { raw: row, status: "error", reason: `No control level/lot match for ${param.name} on ${machine.name} (check Level or Lot Number)` };
         if (!date) return { raw: row, status: "error", reason: "Missing date" };
         if (value === "" || isNaN(parseFloat(value))) return { raw: row, status: "error", reason: "Missing or invalid value" };
 
         return {
           raw: row, status: "ok",
-          machine: machine.name, parameter: param.name, level: control.level, lot: control.lotNumber,
+          parameter: param.name, level: control.level, lot: control.lotNumber,
           controlId: control.id, date: String(date), time: time || "", value: parseFloat(value),
           operator: operator || "", comment: comment || "",
         };
@@ -4446,12 +4466,12 @@ function IQCCsvImport({ qcMachines, qcParameters, qcControls, personnel, onImpor
     <div className="bg-white rounded-lg border p-5 mb-4" style={{ borderColor: COLORS.teal, borderWidth: 1.5 }}>
       <div className="flex items-center justify-between mb-2">
         <div className="text-sm font-semibold flex items-center gap-2" style={{ color: COLORS.navy }}>
-          <Upload size={15} color={COLORS.teal} /> Bulk import IQC results from CSV
+          <Upload size={15} color={COLORS.teal} /> Bulk import IQC results for {machine.name}
         </div>
         <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={15} /></button>
       </div>
       <p className="text-xs text-gray-500 mb-3">
-        One file, any mix of parameters and machines — each row is matched to an existing control level by Machine + Parameter + (Lot Number or Level). Control levels must already be set up first; this only logs results, it doesn't create new parameters or controls.
+        Every row in this file is imported against <strong>{machine.name}</strong> only — there's no Machine column, so a result can never land under the wrong analyser by a typo. Each row is matched to an existing control level by Parameter + (Lot Number or Level); control levels must already be set up first, this only logs results, it doesn't create new parameters or controls. Importing for a different machine? Close this, select that machine above, and reopen.
       </p>
 
       <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -4477,7 +4497,7 @@ function IQCCsvImport({ qcMachines, qcParameters, qcControls, personnel, onImpor
                 {r.status === "ok" ? (
                   <>
                     <Badge color={COLORS.teal}>OK</Badge>
-                    <span>{r.machine} · {r.parameter} · {r.level} · {r.date} · value {r.value}</span>
+                    <span>{r.parameter} · {r.level} · {r.date} · value {r.value}</span>
                   </>
                 ) : (
                   <>
