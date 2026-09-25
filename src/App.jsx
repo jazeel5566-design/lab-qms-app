@@ -1169,7 +1169,6 @@ export default function App() {
     { id: "competency", label: "Staff competency", icon: GraduationCap },
     { id: "equipment", label: "Equipment records", icon: Wrench },
     { id: "documents", label: "Documents", icon: FolderOpen },
-    { id: "personnel", label: "Personnel", icon: Users },
     ...(canSeeAuditBackup ? [{ id: "mgmtreview", label: "Management review", icon: CheckCircle2 }] : []),
     ...(canSeeAuditBackup ? [{ id: "audit", label: "Audit & Backup", icon: History }] : []),
     ...(isAdmin || isQaManager ? [{ id: "settings", label: "Settings", icon: KeyRound }] : []),
@@ -1282,8 +1281,6 @@ export default function App() {
           publishControlledDocumentAction={publishControlledDocumentAction}
           documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords}
           personnelDocuments={personnelDocuments} createPersonnelDocumentAction={createPersonnelDocumentAction} canAssignTasks={canAssignTasks} personnelLaboratories={personnelLaboratories} />}
-        {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canSeeAllStaff={canSeeAllStaff} canEdit={canEdit}
-          laboratories={laboratories} personnelLaboratories={personnelLaboratories} assignPersonnelToLabAction={assignPersonnelToLabAction} unassignPersonnelFromLabAction={unassignPersonnelFromLabAction} />}
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} managementReviewItems={managementReviewItems} addManagementReview={addManagementReview}
           deleteManagementReview={deleteManagementReview} stats={stats} currentUser={currentUser} />}
         {tab === "audit" && canSeeAuditBackup && <AuditBackup />}
