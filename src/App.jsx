@@ -1236,6 +1236,11 @@ export default function App() {
               <div className="text-[10px]" style={{ color: COLORS.seafoam }}>{currentUser.role}</div>
             </div>
           </div>
+          <button onClick={() => setTab("myprofile")}
+            className="w-full flex items-center justify-center gap-1.5 text-xs px-2 py-1.5 rounded-md border mb-2"
+            style={{ borderColor: "#2A5560", color: "#C7D6D2" }}>
+            <UserCheck size={13} /> My profile
+          </button>
           <button onClick={() => { authApi.signOut(); setCurrentUser(null); }}
             className="w-full flex items-center justify-center gap-1.5 text-xs px-2 py-1.5 rounded-md border mb-2"
             style={{ borderColor: "#2A5560", color: "#C7D6D2" }}>
@@ -1281,6 +1286,13 @@ export default function App() {
           publishControlledDocumentAction={publishControlledDocumentAction}
           documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords}
           personnelDocuments={personnelDocuments} createPersonnelDocumentAction={createPersonnelDocumentAction} canAssignTasks={canAssignTasks} personnelLaboratories={personnelLaboratories} />}
+        {tab === "myprofile" && (
+          <div className="p-8 w-full">
+            <h1 className="text-2xl font-semibold mb-1" style={{ color: COLORS.navy }}>My Profile</h1>
+            <p className="text-sm text-gray-500 mb-4">Your own record — record card number, access role, and lab assignment are set by an Admin, but you can update your own contact email here.</p>
+            <MyProfileCard currentUser={currentUser} personnel={personnel} laboratories={laboratories} />
+          </div>
+        )}
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} managementReviewItems={managementReviewItems} addManagementReview={addManagementReview}
           deleteManagementReview={deleteManagementReview} stats={stats} currentUser={currentUser} />}
         {tab === "audit" && canSeeAuditBackup && <AuditBackup />}
