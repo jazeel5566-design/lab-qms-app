@@ -22,6 +22,7 @@ import * as qcApi from "./api/qc.js";
 import * as eqaDocApi from "./api/eqaAndDocuments.js";
 import * as eqaProgramsApi from "./api/eqaPrograms.js";
 import * as analyserMappingsApi from "./api/analyserMappings.js";
+import * as personnelDocumentsApi from "./api/personnelDocuments.js";
 import * as riskApi from "./api/risks.js";
 import * as mgmtReviewApi from "./api/managementReviews.js";
 import * as storageApi from "./api/storage.js";
@@ -44,6 +45,7 @@ import {
   machineFromDb, machineToDb, parameterFromDb, parameterToDb,
   controlFromDb, controlToDb, runFromDb, runToDb,
   eqaFromDb, eqaToDb, eqaProgramFromDb, eqaProgramToDb, programAnalyteFromDb, programAnalyteToDb, testCodeMappingFromDb, testCodeMappingToDb, documentFromDb, documentToDb,
+  personnelDocumentFromDb,
   riskFromDb, riskToDb, managementReviewFromDb, managementReviewToDb, managementReviewItemFromDb, managementReviewItemToDb,
   acknowledgmentFromDb, downtimeFromDb, clauseEvidenceFromDb, taskCommentFromDb, taskTemplateFromDb,
   laboratoryFromDb, personnelLabFromDb,
@@ -208,6 +210,26 @@ const CONTROLLED_DOCUMENT_CATEGORIES = ["SOP", "QSP", "Policy", "Manual"];
 const PERSONAL_DOCUMENT_CATEGORIES = ["Professional licence / registration", "Certification", "Other personal document"];
 const GENERAL_DOCUMENT_CATEGORIES = ["Calibration certificate", "Service report", "EQA certificate", "Training material", "Other"];
 const DOCUMENT_CATEGORIES = [...CONTROLLED_DOCUMENT_CATEGORIES, ...PERSONAL_DOCUMENT_CATEGORIES, ...GENERAL_DOCUMENT_CATEGORIES];
+// Per-staff personnel file categories, aligned to ISO 15189:2022 clause 6.2
+// (Personnel) — evidence of education/qualification, training, competence
+// assessment, and authorization the standard expects a lab to keep on file
+// for anyone doing work that affects examination results, plus the everyday
+// HR paperwork that supports those clauses (job description, induction,
+// confidentiality agreement, performance review).
+const PERSONNEL_FILE_CATEGORIES = [
+  "Curriculum Vitae / Resume",
+  "Educational Qualification Certificate",
+  "Professional Registration / License",
+  "Job Description (Signed)",
+  "Confidentiality & Code of Conduct Agreement",
+  "Induction / Orientation Record",
+  "Training Record",
+  "Competency Assessment Record",
+  "Task-Specific Authorization Record",
+  "Continuing Professional Development (CPD)",
+  "Performance Appraisal",
+  "Other",
+];
 
 const initialsOf = (name) => (name || "").trim().split(/\s+/).map(w => w[0]).join("").toUpperCase().slice(0, 3);
 const zScore = (value, mean, sd) => (!sd ? 0 : (value - mean) / sd);
@@ -353,6 +375,7 @@ export default function App() {
   const [programAnalytes, setProgramAnalytes] = useState([]);
   const [testCodeMappings, setTestCodeMappings] = useState([]);
   const [documents, setDocuments] = useState([]);
+  const [personnelDocuments, setPersonnelDocuments] = useState([]);
   const [risks, setRisks] = useState([]);
   const [managementReviews, setManagementReviews] = useState([]);
   const [managementReviewItems, setManagementReviewItems] = useState([]);
@@ -397,7 +420,7 @@ export default function App() {
    * or later, once they've picked one from the login-time selector.
    */
   const loadLabScopedData = async (labId, p) => {
-    const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, progRows, analyteRows, mappingRows, docRows, riskRows, mrRows, mriRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows] = await Promise.all([
+    const [csRows, tRows, nRows, compRows, eqRows, eqrRows, qmRows, qpRows, qcRows, qrRows, eqaRows, progRows, analyteRows, mappingRows, docRows, riskRows, mrRows, mriRows, ackRows, dtRows, ceRows, tcRows, ttRows, nsRows, pdRows] = await Promise.all([
       clauseApi.listClauseStatus(labId),
       taskApi.listTasks(labId),
       ncApi.listNonconformities(labId),
@@ -422,6 +445,7 @@ export default function App() {
       taskCommentsApi.listTaskComments(labId),
       taskTemplatesApi.listTaskTemplates(labId),
       notificationSettingsApi.listNotificationSettings(),
+      personnelDocumentsApi.listPersonnelDocuments(labId),
     ]);
 
     const cs = {};
@@ -452,6 +476,7 @@ export default function App() {
     setTaskComments(tcRows.map(r => taskCommentFromDb(r, p)));
     setTaskTemplates(ttRows.map(r => taskTemplateFromDb(r, p)));
     setNotificationSettings(Object.fromEntries(nsRows.map(r => [r.event_key, r.enabled])));
+    setPersonnelDocuments(pdRows.map(r => personnelDocumentFromDb(r, p)));
   };
 
   /** Called once the user has picked a laboratory from the login-time selector (only shown when they have more than one). */
@@ -1007,6 +1032,33 @@ export default function App() {
     return mapped;
   };
 
+  /**
+   * Uploads a new personnel-file document. If the person already has a
+   * document in that same category, this is treated as a new VERSION (the
+   * old one is kept, never overwritten or deleted — see 0047). Only
+   * manager-tier roles can call this; the "Upload" button itself is only
+   * ever shown to them (see PersonnelFileForm), and the database's own RLS
+   * would refuse the insert either way.
+   */
+  const createPersonnelDocumentAction = async (personnelId, category, file, notes) => {
+    const storagePath = await storageApi.uploadPersonnelDocumentFile(file, activeLaboratoryId, personnelId, category);
+    const existingVersions = personnelDocuments.filter(d => d.personnelId === personnelId && d.category === category);
+    const nextVersion = existingVersions.length ? Math.max(...existingVersions.map(d => d.version)) + 1 : 1;
+    const row = await personnelDocumentsApi.createPersonnelDocument({
+      laboratory_id: activeLaboratoryId,
+      personnel_id: personnelId,
+      category,
+      file_name: file.name,
+      storage_path: storagePath,
+      version: nextVersion,
+      notes: notes || null,
+      uploaded_by: nameToId(personnel, currentUser.name),
+    });
+    const mapped = personnelDocumentFromDb(row, personnel);
+    setPersonnelDocuments(prev => [mapped, ...prev]);
+    return mapped;
+  };
+
   const stats = useMemo(() => {
     const statuses = ALL_SUBCLAUSES.map(s => clauseStatus[s.id]?.status || "Not assessed");
     const counts = { "Not assessed": 0, "Compliant": 0, "Partial": 0, "Non-conformant": 0 };
@@ -1228,7 +1280,8 @@ export default function App() {
         {tab === "documents" && <Documents documents={documents} updateDocuments={updateDocuments} personnel={personnel}
           currentUser={currentUser} canEdit={canEdit} canPublishControlledDocs={canPublishControlledDocs}
           publishControlledDocumentAction={publishControlledDocumentAction}
-          documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords} />}
+          documentAcknowledgments={documentAcknowledgments} acknowledgeDocumentAction={acknowledgeDocumentAction} activeLaboratoryId={activeLaboratoryId} canDeleteRecords={canDeleteRecords}
+          personnelDocuments={personnelDocuments} createPersonnelDocumentAction={createPersonnelDocumentAction} canAssignTasks={canAssignTasks} personnelLaboratories={personnelLaboratories} />}
         {tab === "personnel" && <Personnel personnel={personnel} setPersonnel={setPersonnel} updatePersonnel={updatePersonnel} currentUser={currentUser} isAdmin={isAdmin} canSeeAllStaff={canSeeAllStaff} canEdit={canEdit}
           laboratories={laboratories} personnelLaboratories={personnelLaboratories} assignPersonnelToLabAction={assignPersonnelToLabAction} unassignPersonnelFromLabAction={unassignPersonnelFromLabAction} />}
         {tab === "mgmtreview" && canSeeAuditBackup && <ManagementReview managementReviews={managementReviews} managementReviewItems={managementReviewItems} addManagementReview={addManagementReview}
@@ -5484,14 +5537,16 @@ function LaboratoryPicker({ choices, onSelect, onLogout }) {
 
 // ---------------- Documents (linked SOPs, certificates, calibration reports) ----------------
 // ---------------- Document link (handles both an external URL and a real uploaded file) ----------------
-function DocumentLink({ title, url, storagePath, className }) {
+function DocumentLink({ title, url, storagePath, className, personnelBucket }) {
   const [loading, setLoading] = useState(false);
 
   if (storagePath) {
     const handleOpen = async () => {
       setLoading(true);
       try {
-        const signedUrl = await storageApi.getSignedDocumentUrl(storagePath);
+        const signedUrl = personnelBucket
+          ? await storageApi.getSignedPersonnelDocumentUrl(storagePath)
+          : await storageApi.getSignedDocumentUrl(storagePath);
         window.open(signedUrl, "_blank", "noopener,noreferrer");
       } catch (e) {
         alert("Could not open this file.\n\n" + e.message);
@@ -5510,7 +5565,7 @@ function DocumentLink({ title, url, storagePath, className }) {
   );
 }
 
-function Documents({ documents, updateDocuments, personnel, currentUser, canEdit, canPublishControlledDocs, publishControlledDocumentAction, documentAcknowledgments, acknowledgeDocumentAction, activeLaboratoryId, canDeleteRecords }) {
+function Documents({ documents, updateDocuments, personnel, currentUser, canEdit, canPublishControlledDocs, publishControlledDocumentAction, documentAcknowledgments, acknowledgeDocumentAction, activeLaboratoryId, canDeleteRecords, personnelDocuments, createPersonnelDocumentAction, canAssignTasks, personnelLaboratories }) {
   const [section, setSection] = useState("controlled");
   const [showControlledForm, setShowControlledForm] = useState(false);
   const [showPersonalForm, setShowPersonalForm] = useState(false);
@@ -5628,6 +5683,7 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
     { id: "controlled", label: `Controlled documents (${controlledList.length})` },
     { id: "personal", label: `Personal documents (${personalDocs.length})` },
     { id: "general", label: `General documents (${generalDocs.length})` },
+    { id: "personnelFiles", label: canAssignTasks ? `Personnel files (${personnel.length})` : "My personnel file" },
   ];
 
   return (
@@ -5857,8 +5913,177 @@ function Documents({ documents, updateDocuments, personnel, currentUser, canEdit
           </div>
         </>
       )}
+
+      {section === "personnelFiles" && (
+        <PersonnelFilesSection
+          personnel={personnel}
+          personnelDocuments={personnelDocuments}
+          canAssignTasks={canAssignTasks}
+          currentUser={currentUser}
+          createPersonnelDocumentAction={createPersonnelDocumentAction}
+          activeLaboratoryId={activeLaboratoryId}
+          personnelLaboratories={personnelLaboratories}
+        />
+      )}
       </>
       )}
+    </div>
+  );
+}
+
+/**
+ * "Personnel files" section of the Documents page. Admin/Deputy Admin/QA
+ * Manager/Deputy QA Manager (canAssignTasks) see every staff member in the
+ * active lab and can upload on their behalf; anyone else sees only their
+ * own file, with no upload control — matching the RLS in 0047 exactly, so
+ * nothing shown here could fail server-side.
+ */
+function PersonnelFilesSection({ personnel, personnelDocuments, canAssignTasks, currentUser, createPersonnelDocumentAction, activeLaboratoryId, personnelLaboratories }) {
+  const [expandedPersonId, setExpandedPersonId] = useState(canAssignTasks ? null : currentUser.id);
+  const [staffSearch, setStaffSearch] = useState("");
+
+  if (!canAssignTasks) {
+    return (
+      <div>
+        <p className="text-sm text-gray-500 mb-3">Your own personnel file — training records, qualification proofs, and other records your QA Manager or Admin keeps on file for you. You can view these but not upload or remove them yourself.</p>
+        <PersonnelFileCategories personnelId={currentUser.id} documentsForPerson={personnelDocuments.filter(d => d.personnelId === currentUser.id)} canUpload={false} createPersonnelDocumentAction={createPersonnelDocumentAction} />
+      </div>
+    );
+  }
+
+  // Only staff who belong to the CURRENTLY ACTIVE laboratory — either as
+  // their primary lab or via an extra assignment — matching the "in the
+  // designated laboratory" scope the manager asked for and the has_lab_access()
+  // check the database itself applies when a document is uploaded.
+  const staffInActiveLab = personnel.filter(p =>
+    p.laboratoryId === activeLaboratoryId ||
+    personnelLaboratories.some(pl => pl.personnelId === p.id && pl.laboratoryId === activeLaboratoryId)
+  );
+  const filteredStaff = staffInActiveLab.filter(p => p.name.toLowerCase().includes(staffSearch.trim().toLowerCase()));
+
+  return (
+    <div>
+      <p className="text-sm text-gray-500 mb-3">One file per staff member — training records, qualification proofs, authorizations, and other ISO 15189:2022 clause 6.2 (Personnel) records. Uploading a document in a category that already has one adds it as a new version; nothing here can be deleted, so the full history always stays on file.</p>
+      <input className={inputCls} style={{ ...inputStyle, maxWidth: 320 }} value={staffSearch} onChange={e => setStaffSearch(e.target.value)} placeholder="Search staff by name…" />
+      <div className="bg-white rounded-lg border divide-y mt-3" style={{ borderColor: "#E1EBE8" }}>
+        {filteredStaff.length === 0 && <Empty text="No staff match that search." />}
+        {filteredStaff.map(p => {
+          const docsForPerson = personnelDocuments.filter(d => d.personnelId === p.id);
+          const categoriesFiled = new Set(docsForPerson.map(d => d.category)).size;
+          const isExpanded = expandedPersonId === p.id;
+          return (
+            <div key={p.id}>
+              <button onClick={() => setExpandedPersonId(isExpanded ? null : p.id)} className="w-full flex items-center gap-3 px-5 py-3 text-left hover:bg-gray-50">
+                {isExpanded ? <ChevronDown size={15} color={COLORS.teal} /> : <ChevronRight size={15} color={COLORS.teal} />}
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium truncate" style={{ color: COLORS.navy }}>{p.name}</div>
+                  <div className="text-xs text-gray-400 truncate">{p.role || p.accessRole}</div>
+                </div>
+                <Badge color={COLORS.teal}>{categoriesFiled} / {PERSONNEL_FILE_CATEGORIES.length} categories on file</Badge>
+              </button>
+              {isExpanded && (
+                <div className="px-5 pb-4">
+                  <PersonnelFileCategories personnelId={p.id} documentsForPerson={docsForPerson} canUpload={true} createPersonnelDocumentAction={createPersonnelDocumentAction} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Renders every ISO-aligned category row for ONE person, each with its current version, upload control, and version history. */
+function PersonnelFileCategories({ personnelId, documentsForPerson, canUpload, createPersonnelDocumentAction }) {
+  const [uploadingCategory, setUploadingCategory] = useState(null);
+  const [expandedHistoryCategory, setExpandedHistoryCategory] = useState(null);
+
+  return (
+    <div className="rounded-lg border divide-y mt-2" style={{ borderColor: "#E1EBE8" }}>
+      {PERSONNEL_FILE_CATEGORIES.map(category => {
+        const versions = documentsForPerson.filter(d => d.category === category).sort((a, b) => b.version - a.version);
+        const current = versions[0];
+        const history = versions.slice(1);
+        return (
+          <div key={category} className="px-4 py-3">
+            <div className="flex items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="text-sm font-medium" style={{ color: COLORS.navy }}>{category}</div>
+                {current ? (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <DocumentLink title={current.fileName} storagePath={current.storagePath} personnelBucket className="text-sm" />
+                    <span className="text-xs text-gray-400">v{current.version} · uploaded by {current.uploadedBy} · {(current.uploadedAt || "").slice(0, 10)}</span>
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-400">Not uploaded yet.</div>
+                )}
+                {current?.notes && <div className="text-xs text-gray-400 mt-0.5">{current.notes}</div>}
+              </div>
+              {history.length > 0 && (
+                <button onClick={() => setExpandedHistoryCategory(v => v === category ? null : category)} className="text-xs underline" style={{ color: COLORS.teal }}>
+                  {expandedHistoryCategory === category ? "Hide" : "Show"} history ({history.length})
+                </button>
+              )}
+              {canUpload && (
+                <button onClick={() => setUploadingCategory(v => v === category ? null : category)} className="text-xs px-2.5 py-1 rounded-md border shrink-0" style={{ borderColor: COLORS.teal, color: COLORS.teal }}>
+                  {current ? "Upload new version" : "Upload"}
+                </button>
+              )}
+            </div>
+            {expandedHistoryCategory === category && (
+              <div className="mt-2 pl-3 border-l-2 space-y-1" style={{ borderColor: "#E1EBE8" }}>
+                {history.map(v => (
+                  <div key={v.id} className="flex items-center gap-2 flex-wrap">
+                    <DocumentLink title={v.fileName} storagePath={v.storagePath} personnelBucket className="text-xs" />
+                    <span className="text-xs text-gray-400">v{v.version} · uploaded by {v.uploadedBy} · {(v.uploadedAt || "").slice(0, 10)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {uploadingCategory === category && canUpload && (
+              <PersonnelFileUploadForm
+                onCancel={() => setUploadingCategory(null)}
+                onSave={async (file, notes) => {
+                  await createPersonnelDocumentAction(personnelId, category, file, notes);
+                  setUploadingCategory(null);
+                }}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function PersonnelFileUploadForm({ onSave, onCancel }) {
+  const [file, setFile] = useState(null);
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSave = async () => {
+    if (!file) { setError("Choose a file first."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSave(file, notes);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="mt-2 p-3 rounded-md" style={{ background: COLORS.mint }}>
+      <input type="file" onChange={e => setFile(e.target.files?.[0] || null)} className="text-xs block mb-2" />
+      <textarea value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional note (e.g. what this covers, expiry date)…" className={inputCls} style={{ ...inputStyle, minHeight: 50 }} />
+      {error && <div className="text-xs text-red-500 mt-1">{error}</div>}
+      <div className="flex gap-2 mt-2">
+        <button onClick={handleSave} disabled={saving} className="text-xs px-3 py-1.5 rounded-md text-white" style={{ background: COLORS.teal }}>{saving ? "Uploading…" : "Save"}</button>
+        <button onClick={onCancel} className="text-xs px-3 py-1.5 rounded-md border" style={{ borderColor: "#D8E5E1" }}>Cancel</button>
+      </div>
     </div>
   );
 }

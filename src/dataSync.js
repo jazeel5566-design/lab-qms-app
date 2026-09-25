@@ -596,6 +596,24 @@ export const documentToDb = (d, personnel) => ({
   laboratory_id: d.laboratoryId,
 });
 
+// ---------------- personnel_documents (0047) ----------------
+export const personnelDocumentFromDb = (row, personnel) => ({
+  id: row.id,
+  laboratoryId: row.laboratory_id,
+  personnelId: row.personnel_id,
+  personnelName: idToName(personnel, row.personnel_id),
+  category: row.category,
+  fileName: row.file_name,
+  storagePath: row.storage_path,
+  version: row.version || 1,
+  notes: row.notes || "",
+  uploadedBy: idToName(personnel, row.uploaded_by),
+  uploadedAt: row.uploaded_at,
+});
+// No personnelDocumentToDb "update" mapper — this table has no UPDATE
+// policy, so rows are only ever created (see createPersonnelDocumentAction
+// in App.jsx), never edited.
+
 // ---------------- document_acknowledgments ----------------
 export const acknowledgmentFromDb = (row, personnel) => ({
   id: row.id,
